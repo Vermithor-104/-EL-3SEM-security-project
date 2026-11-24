@@ -395,6 +395,64 @@
             </div>
         </div>
 
+        <!-- SECTION 5b: ATTACK SURFACE TOPOLOGY + DOMAIN OWNERSHIP VERIFICATION SIDEBAR -->
+        <div class="grid-attack-verify">
+
+            <!-- Left: Domain Ownership Verification Sidebar Panel -->
+            <div class="tactical-panel" id="verifyPanel" style="padding:16px;min-width:0;">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div style="font-size:0.8rem;font-weight:700;letter-spacing:0.04em;color:#f1f5f9;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+                    <span style="color:#00f0ff;">🔑</span> Domain Ownership Verification
+                </div>
+                <div style="font-size:0.75rem;color:#94a3b8;margin-bottom:14px;line-height:1.45;">
+                    Prove administrative control over a domain to authorize active scans:
+                </div>
+                <div style="font-size:0.75rem;color:#cbd5e1;margin-bottom:6px;font-weight:600;">Target Domain</div>
+                <input type="text" id="verifyDomainInput" placeholder="yourdomain.com"
+                    style="width:100%;box-sizing:border-box;background:#030712;border:1px solid rgba(0,240,255,0.25);color:#e2e8f0;padding:8px 10px;border-radius:4px;font-size:0.8rem;font-family:inherit;margin-bottom:12px;">
+                <div style="display:flex;gap:8px;margin-bottom:12px;">
+                    <button class="btn btn-primary btn-sm" id="btnSidebarGetToken" style="flex:1;font-size:0.78rem;padding:7px 6px;">1. Get Token</button>
+                    <button class="btn btn-secondary btn-sm" id="btnSidebarVerify" style="flex:1;font-size:0.78rem;padding:7px 6px;">2. Verify</button>
+                </div>
+                <div id="verifyPanelStatus" style="font-size:0.75rem;color:#f87171;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);border-radius:4px;padding:10px;line-height:1.45;display:none;"></div>
+                <div id="verifyPanelSuccess" style="font-size:0.75rem;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.25);border-radius:4px;padding:10px;line-height:1.45;display:none;"></div>
+                <div id="verifyTokenBox" style="display:none;margin-top:12px;">
+                    <div style="font-size:0.7rem;color:#94a3b8;margin-bottom:4px;">DNS TXT Record:</div>
+                    <div id="verifyTokenDns" style="font-size:0.72rem;font-family:'JetBrains Mono',monospace;background:#030712;border:1px solid rgba(0,240,255,0.2);padding:6px 8px;border-radius:4px;color:#38bdf8;word-break:break-all;margin-bottom:8px;"></div>
+                    <div style="font-size:0.7rem;color:#94a3b8;margin-bottom:4px;">HTTP Token File URL:</div>
+                    <div id="verifyTokenHttp" style="font-size:0.72rem;font-family:'JetBrains Mono',monospace;background:#030712;border:1px solid rgba(255,255,255,0.08);padding:6px 8px;border-radius:4px;color:#94a3b8;word-break:break-all;"></div>
+                    <button class="btn btn-secondary btn-sm" id="btnSidebarCopyToken" style="margin-top:10px;width:100%;font-size:0.75rem;padding:6px;">📋 Copy DNS Token</button>
+                </div>
+            </div>
+
+            <!-- Right: Interactive Attack Surface Network Topology Graph -->
+            <div class="tactical-panel" id="inlineAttackGraphPanel" style="min-height:460px;padding:0;overflow:hidden;">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div class="panel-header" style="padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06);">
+                    <div>
+                        <div class="panel-title-row">
+                            <span class="panel-icon">🕸️</span>
+                            <h3 class="panel-title">Interactive Attack Surface Network Topology</h3>
+                        </div>
+                        <div class="panel-subtitle mono">Dynamic force-directed cyber graph illustrating the target, IP endpoints, public subdomains, open ports, and correlated risk nodes.</div>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="btnExpandAttackGraph" title="Open fullscreen" style="white-space:nowrap;">⛶ Expand</button>
+                </div>
+                <div style="height:400px;position:relative;">
+                    <iframe id="inlineAttackGraphFrame" title="Attack Surface Network Graph"
+                        style="width:100%;height:100%;border:none;background:#050811;"
+                        srcdoc="<html><body style='margin:0;background:#050811;display:flex;align-items:center;justify-content:center;height:100vh;'><div style='text-align:center;color:#334155;font-family:monospace;font-size:0.85rem;'>Run an audit to generate<br>the attack surface graph.</div></body></html>">
+                    </iframe>
+                </div>
+            </div>
+        </div>
+
         <!-- SECTION 5: MULTI-FRAMEWORK COMPLIANCE GOVERNANCE -->
         <div class="tactical-panel compliance-panel">
             <span class="corner-reticle tl"></span>

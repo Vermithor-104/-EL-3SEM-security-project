@@ -146,6 +146,12 @@ window.AegisApp = (function () {
 
         // Render Compliance Cards
         renderComplianceCards(comp);
+
+        // Update inline Attack Surface Network Topology graph
+        const inlineGraphFrame = document.getElementById('inlineAttackGraphFrame');
+        if (inlineGraphFrame) {
+            inlineGraphFrame.src = `/attack-graph?target=${encodeURIComponent(target)}`;
+        }
     }
 
     function renderFindingsTable(findings) {
@@ -808,3 +814,200 @@ if (document.readyState === 'loading') {
 window.addEventListener('load', () => {
     AegisApp.initDashboard();
 });
+
+// ============================================================
+// INLINE DOMAIN OWNERSHIP VERIFICATION SIDEBAR PANEL LOGIC
+// ============================================================
+(function () {
+    'use strict';
+
+    let _currentToken = '';
+    let _currentDomain = '';
+
+    function el(id) { return document.getElementById(id); }
+
+    function showStatus(msg, isError = true) {
+        const s = el('verifyPanelStatus');
+        const ok = el('verifyPanelSuccess');
+        if (isError) {
+            if (s) { s.textContent = msg; s.style.display = 'block'; }
+            if (ok) ok.style.display = 'none';
+        } else {
+            if (ok) { ok.textContent = msg; ok.style.display = 'block'; }
+            if (s) s.style.display = 'none';
+        }
+    }
+
+    function hideStatus() {
+        const s = el('verifyPanelStatus');
+        const ok = el('verifyPanelSuccess');
+        if (s) s.style.display = 'none';
+        if (ok) ok.style.display = 'none';
+    }
+
+    function getDomain() {
+        const inp = el('verifyDomainInput');
+        // Mirror from main scan target if sidebar input is empty
+        const main = el('scanTargetInput');
+        return (inp && inp.value.trim()) || (main && main.value.trim()) || '';
+    }
+
+    async function sidebarGetToken() {
+        const domain = getDomain();
+        if (!domain) {
+            showStatus('Enter a domain name first.', true);
+            return;
+        }
+        _currentDomain = domain;
+        hideStatus();
+        const btn = el('btnSidebarGetToken');
+        if (btn) btn.textContent = 'Loading…';
+
+        try {
+            const resp = await fetch('/api/verify/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain })
+            });
+            const data = await resp.json();
+
+            if (data.success && data.instructions) {
+                const ins = data.instructions;
+                const dnsHost = (ins.dns_txt_record && ins.dns_txt_record.host) || ins.dns_record || `_aegis-verify.${domain}`;
+                const tokenVal = (ins.dns_txt_record && ins.dns_txt_record.value) || ins.dns_value || ins.token || '';
+                const fileUrl = (ins.http_challenge && ins.http_challenge.url) || ins.file_url || `https://${domain}/.well-known/aegis-verify.txt`;
+
+                _currentToken = tokenVal;
+
+                const dnsBox = el('verifyTokenDns');
+                if (dnsBox) dnsBox.textContent = `${dnsHost} TXT "${tokenVal}"`;
+
+                const httpBox = el('verifyTokenHttp');
+                if (httpBox) httpBox.textContent = fileUrl;
+
+                const tokenBox = el('verifyTokenBox');
+                if (tokenBox) tokenBox.style.display = 'block';
+
+                showStatus('Token generated. Add the DNS TXT record above, then click "2. Verify".', true);
+                // Use a neutral blue colour for instruction (not an error)
+                const s = el('verifyPanelStatus');
+                if (s) {
+                    s.style.background = 'rgba(56,189,248,0.07)';
+                    s.style.borderColor = 'rgba(56,189,248,0.25)';
+                    s.style.color = '#38bdf8';
+                }
+            } else {
+                showStatus(data.error || 'Failed to start verification.', true);
+            }
+        } catch (e) {
+            showStatus(`Network error: ${e.message}`, true);
+        } finally {
+            if (btn) btn.textContent = '1. Get Token';
+        }
+    }
+
+    async function sidebarVerify() {
+        const domain = _currentDomain || getDomain();
+        if (!domain) {
+            showStatus('Get a token first by clicking "1. Get Token".', true);
+            return;
+        }
+        hideStatus();
+        const btn = el('btnSidebarVerify');
+        if (btn) btn.textContent = 'Checking…';
+
+        try {
+            const resp = await fetch('/api/verify/check', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain })
+            });
+            const data = await resp.json();
+
+            if (data.verified) {
+                showStatus(`✓ ${domain} verified! Active scanning authorized for 30 days.`, false);
+                const tokenBox = el('verifyTokenBox');
+                if (tokenBox) tokenBox.style.display = 'none';
+
+                // Update mode badge in header
+                const badge = el('operationalModeBadge');
+                if (badge) {
+                    badge.textContent = 'VERIFIED ACTIVE';
+                    badge.parentElement.style.borderColor = '#10b981';
+                }
+                // Unlock active scan checkbox
+                const chk = el('chkActiveScan');
+                if (chk) { chk.disabled = false; chk.checked = true; }
+                const container = el('activeScanToggleContainer');
+                if (container) container.style.opacity = '1';
+
+                if (window.AegisUtils) AegisUtils.showToast(`Domain ${domain} verified! Active scan unlocked.`, 'success');
+            } else {
+                showStatus(data.message || 'Token not found yet. DNS may take up to 2 minutes to propagate.', true);
+                const s = el('verifyPanelStatus');
+                if (s) {
+                    s.style.background = 'rgba(239,68,68,0.08)';
+                    s.style.borderColor = 'rgba(239,68,68,0.25)';
+                    s.style.color = '#f87171';
+                }
+            }
+        } catch (e) {
+            showStatus(`Check failed: ${e.message}`, true);
+        } finally {
+            if (btn) btn.textContent = '2. Verify';
+        }
+    }
+
+    function setupSidebarVerification() {
+        const btnGet = el('btnSidebarGetToken');
+        const btnVer = el('btnSidebarVerify');
+        const btnCopy = el('btnSidebarCopyToken');
+        const btnExpand = el('btnExpandAttackGraph');
+
+        if (btnGet) btnGet.addEventListener('click', sidebarGetToken);
+        if (btnVer) btnVer.addEventListener('click', sidebarVerify);
+
+        if (btnCopy) {
+            btnCopy.addEventListener('click', () => {
+                if (!_currentToken) return;
+                navigator.clipboard.writeText(_currentToken).then(() => {
+                    if (window.AegisUtils) AegisUtils.showToast('Token copied!', 'success');
+                }).catch(() => {});
+            });
+        }
+
+        // Keep sidebar domain in sync with main target input
+        const mainInput = el('scanTargetInput');
+        const sideInput = el('verifyDomainInput');
+        if (mainInput && sideInput) {
+            mainInput.addEventListener('input', () => {
+                if (!sideInput.value) sideInput.placeholder = mainInput.value || 'yourdomain.com';
+            });
+        }
+
+        // Expand button: load inline graph into the existing full-screen modal
+        if (btnExpand) {
+            btnExpand.addEventListener('click', () => {
+                const headerBtn = el('btnOpenAttackGraph');
+                if (headerBtn) headerBtn.click();
+            });
+        }
+
+        // After a scan loads the attack graph, also populate the inline iframe
+        document.addEventListener('aegis:attackgraph', (ev) => {
+            const frame = el('inlineAttackGraphFrame');
+            const modalFrame = el('attackGraphFrame');
+            if (frame && modalFrame && modalFrame.src) {
+                frame.src = modalFrame.src;
+            } else if (frame && ev.detail && ev.detail.src) {
+                frame.src = ev.detail.src;
+            }
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupSidebarVerification);
+    } else {
+        setupSidebarVerification();
+    }
+})();
