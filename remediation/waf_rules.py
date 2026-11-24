@@ -9,8 +9,15 @@ import json
 from typing import Any
 
 
-def generate_aws_waf_json(findings: list[dict[str, Any]], target: str = "example.com") -> str:
+def _norm_args(findings: Any, target: str) -> tuple[list[dict[str, Any]], str]:
+    if isinstance(findings, str):
+        return [], findings
+    return findings or [], target
+
+
+def generate_aws_waf_json(findings: list[dict[str, Any]] | str | None = None, target: str = "example.com") -> str:
     """Generate AWS WAF WebACL Custom Response Headers & Block Rule JSON."""
+    findings, target = _norm_args(findings, target)
     rules = [
         {
             "Name": "EnforceSecurityHeadersAndMitigation",
@@ -79,8 +86,9 @@ def generate_aws_waf_json(findings: list[dict[str, Any]], target: str = "example
     return json.dumps(web_acl, indent=2)
 
 
-def generate_cloudflare_waf_rules(findings: list[dict[str, Any]], target: str = "example.com") -> str:
+def generate_cloudflare_waf_rules(findings: list[dict[str, Any]] | str | None = None, target: str = "example.com") -> str:
     """Generate Cloudflare Custom Firewall Rules expressions."""
+    findings, target = _norm_args(findings, target)
     lines = [
         f"# ========================================================",
         f"# Cloudflare Custom WAF Expression Rules for: {target}",
@@ -105,8 +113,12 @@ def generate_cloudflare_waf_rules(findings: list[dict[str, Any]], target: str = 
     return "\n".join(lines)
 
 
-def generate_modsecurity_rules(findings: list[dict[str, Any]], target: str = "example.com") -> str:
+generate_cloudflare_waf_expression = generate_cloudflare_waf_rules
+
+
+def generate_modsecurity_rules(findings: list[dict[str, Any]] | str | None = None, target: str = "example.com") -> str:
     """Generate ModSecurity / Coraza WAF .conf rules."""
+    findings, target = _norm_args(findings, target)
     lines = [
         f"# ========================================================",
         f"# ModSecurity (OWASP CRS) Rules for: {target}",
@@ -131,3 +143,6 @@ def generate_modsecurity_rules(findings: list[dict[str, Any]], target: str = "ex
         'SecHeaderRemove X-Powered-By',
     ]
     return "\n".join(lines)
+
+
+generate_cloudflare_waf_expression = generate_cloudflare_waf_rules

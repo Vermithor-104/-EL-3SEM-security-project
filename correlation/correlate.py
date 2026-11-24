@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from correlation.enrich import enrich_cves
 from correlation.nvd_lookup import lookup_cves
+from correlation.backport_detector import detect_backport
 from schemas import CorrelatedAsset, CorrelatedFindings, CveRecord
 from storage import read_json, write_json
 
@@ -11,6 +12,9 @@ from storage import read_json, write_json
 # Keys are lowercased substrings matched against the issue string;
 # first match wins, so order from most- to least-specific matters.
 _ISSUE_SEVERITY: list[tuple[str, str]] = [
+    # Critical credentials and infrastructure takeovers (Phase 4)
+    ("exposed secret", "Critical"),
+    ("dangling subdomain takeover", "Critical"),
     # Actively exploitable or confidentiality risk
     ("without tls encryption", "High"),
     ("weak tls grade", "High"),
@@ -90,6 +94,22 @@ def _config_issues(discovered: dict) -> list[tuple[str, str]]:
     for dns_issue in passive_dns_issues:
         _add(f"DNS Email Security: {dns_issue}")
 
+    # Phase 4: Exposed Secrets
+    for sec in discovered.get("passive_meta", {}).get("exposed_secrets") or []:
+        sec_type = sec.get("secret_type") if isinstance(sec, dict) else getattr(sec, "secret_type", "Secret")
+        sec_loc = sec.get("location") if isinstance(sec, dict) else getattr(sec, "location", "")
+        sec_hint = sec.get("masked_hint") if isinstance(sec, dict) else getattr(sec, "masked_hint", "****")
+        _add(f"Exposed Secret Detected: {sec_type} at {sec_loc} ({sec_hint})")
+
+    # Phase 4: Verified Dangling Subdomain Takeovers
+    for d in discovered.get("passive_meta", {}).get("dangling_dns") or []:
+        is_vuln = d.get("is_vulnerable") if isinstance(d, dict) else getattr(d, "is_vulnerable", False)
+        if is_vuln:
+            sub = d.get("subdomain") if isinstance(d, dict) else getattr(d, "subdomain", "")
+            prov = d.get("provider_name") if isinstance(d, dict) else getattr(d, "provider_name", "Cloud Service")
+            cname = d.get("cname_target") if isinstance(d, dict) else getattr(d, "cname_target", "")
+            _add(f"Dangling Subdomain Takeover: {sub} -> {prov} ({cname})")
+
     # Passive CT subdomains summary note
     ct_subs = discovered.get("passive_meta", {}).get("ct_subdomains") or []
     if ct_subs:
@@ -131,8 +151,28 @@ def correlate(discovered: dict | None = None) -> CorrelatedFindings:
         query_key = f"{product}|{version}"
         if query_key not in seen_queries:
             raw_cves = lookup_cves(product, version) if product and product != "unknown" else []
-            seen_queries[query_key] = enrich_cves(raw_cves)
-        cves = seen_queries[query_key]
+            # Backport-aware matching (Phase 2)
+            bp_verdict = detect_backport(product, version)
+            if bp_verdict.possibly_backported:
+                for c in raw_cves:
+                    c.possibly_backported = True
+                    c.confidence = "low"
+            seen_queries[query_key] = raw_cves
+
+    # Enrich all unique matches together. The EPSS API accepts up to 50 CVEs
+    # per request, so batching avoids one request per product and rereading the
+    # KEV catalog for every distinct port service.
+    unique_cves: dict[str, CveRecord] = {}
+    for matches in seen_queries.values():
+        for cve in matches:
+            unique_cves.setdefault(cve.cve_id, cve)
+    if unique_cves:
+        enrich_cves(list(unique_cves.values()))
+
+    for raw in ports:
+        product = raw.get("product") or raw.get("service") or ""
+        version = raw.get("version") or ""
+        cves = seen_queries.get(f"{product}|{version}", [])
         port = raw.get("port")
         exposure = (
             f"Open {raw.get('protocol', 'tcp')}/{port} "

@@ -1,8 +1,8 @@
 """
-Project-wide settings and the scan allowlist guard.
+AEGIS-AI Central Configuration & Environment Management.
 
-Every discovery function must call `require_allowed_target()` before talking
-to a host. That keeps this tool from being used as a general scanner.
+Enforces strict defense defaults, serverless compatibility, target validation,
+and configurable threat intelligence parameters.
 """
 
 from __future__ import annotations
@@ -10,45 +10,136 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import secrets
 from pathlib import Path
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
+# Load .env file if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
 
+# Server & Environment
+ENV = os.getenv("AEGIS_ENV", os.getenv("FLASK_ENV", "production")).lower()
+IS_VERCEL = bool(os.getenv("VERCEL") == "1" or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+DEBUG = os.getenv("AEGIS_DEBUG", "false").lower() in ("true", "1", "yes") and not IS_VERCEL
+PORT = int(os.getenv("PORT", os.getenv("AEGIS_PORT", "5000")))
+HOST = os.getenv("HOST", os.getenv("AEGIS_HOST", "0.0.0.0"))
+# Path configuration with Serverless (/tmp) auto-detection
+if IS_VERCEL:
+    DATA_DIR = Path("/tmp/aegis_data")
+else:
+    DATA_DIR = Path(os.getenv("AEGIS_DATA_DIR", str(ROOT / "data")))
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+def _load_or_generate_secret_key(storage_dir: Path) -> str:
+    """Load or generate a consistent SECRET_KEY shared across all Gunicorn workers."""
+    env_secret = os.getenv("SECRET_KEY", "").strip()
+    if env_secret and env_secret != "aegis-defense-local-dev-key":
+        return env_secret
+    secret_file = storage_dir / ".secret_key"
+    try:
+        if secret_file.exists():
+            content = secret_file.read_text(encoding="utf-8").strip()
+            if content and content != "aegis-defense-local-dev-key" and content != "test":
+                return content
+        key = secrets.token_hex(32)
+        secret_file.write_text(key, encoding="utf-8")
+        try:
+            os.chmod(secret_file, 0o600)
+        except Exception:
+            pass
+        return key
+    except Exception:
+        return secrets.token_hex(32)
+
+SECRET_KEY = _load_or_generate_secret_key(DATA_DIR)
+
+# Optional access control token for scan endpoints and administrative APIs
+AEGIS_API_TOKEN = os.getenv("AEGIS_API_TOKEN", "").strip()
+
+# Proxy and CDN trust settings
+TRUST_CLOUDFLARE_PROXIES = os.getenv("TRUST_CLOUDFLARE_PROXIES", "false").lower() in ("true", "1", "yes")
+SAMPLE_DATA_DIR = ROOT / "data" / "sample"
 ALLOWLIST_PATH = ROOT / "targets.allowlist"
-DATA_DIR = ROOT / "data"
 
-# CVE = Common Vulnerabilities and Exposures — a public ID for a known software flaw.
-# CVSS = Common Vulnerability Scoring System — a 0–10 severity number attached to many CVEs.
+# Scanning & Target Defaults
 DEFAULT_TARGET = os.getenv("DEFAULT_TARGET", "localhost")
 DEFAULT_PORTS = [
     int(p.strip())
     for p in os.getenv("DEFAULT_PORTS", "80,443,3000,8000,8080").split(",")
     if p.strip().isdigit()
 ]
-AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
-BEDROCK_MODEL_ID = os.getenv(
-    "BEDROCK_MODEL_ID",
-    "amazon.nova-micro-v1:0",
-)
+MAX_PORTS_PER_SCAN = 32
+
+# Abuse Prevention & Timeouts
+SAFE_FETCH_TIMEOUT = float(os.getenv("SAFE_FETCH_TIMEOUT", "6.0"))
+MAX_RESPONSE_BYTES = int(os.getenv("MAX_RESPONSE_BYTES", str(1024 * 1024)))  # 1 MB
+MAX_REDIRECTS = int(os.getenv("MAX_REDIRECTS", "3"))
+
+# Rate Limiting (per IP and per Target)
+RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "20"))
+RATE_LIMIT_TARGET_PER_MINUTE = int(os.getenv("RATE_LIMIT_TARGET_PER_MINUTE", "4"))
+
+# Domain Verification
+VERIFICATION_TTL_DAYS = int(os.getenv("VERIFICATION_TTL_DAYS", "30"))
+VERIFICATION_TTL_SECONDS = VERIFICATION_TTL_DAYS * 86400
+
+# Threat Intelligence APIs (Optional credentials)
 NVD_API_KEY = os.getenv("NVD_API_KEY", "").strip()
+FIRST_EPSS_API = os.getenv("FIRST_EPSS_API", "https://api.first.org/data/v1/epss")
+CISA_KEV_FEED = os.getenv(
+    "CISA_KEV_FEED",
+    "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+)
+OSV_QUERY_API = os.getenv("OSV_QUERY_API", "https://api.osv.dev/v1/query")
+
+# AI Copilot Backend (AEGIS Provider-Neutral Layer)
+AEGIS_LLM_PROVIDER = os.getenv("AEGIS_LLM_PROVIDER", os.getenv("LLM_PROVIDER", "none")).lower()
+AEGIS_LLM_BASE_URL = os.getenv("AEGIS_LLM_BASE_URL", os.getenv("AEGIS_LLM_ENDPOINT", "https://api.groq.com/openai/v1")).strip()
+AEGIS_LLM_API_KEY = os.getenv("AEGIS_LLM_API_KEY", "").strip()
+AEGIS_LLM_MODEL = os.getenv("AEGIS_LLM_MODEL", "").strip()
+AEGIS_LLM_MODEL_LARGE = os.getenv("AEGIS_LLM_MODEL_LARGE", "").strip()
+
+AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
+BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "amazon.nova-micro-v1:0")
+DECIDER_URL = os.getenv("DECIDER_URL", "http://127.0.0.1:8088")
+DECIDER_THRESHOLD = float(os.getenv("DECIDER_THRESHOLD", "0.7"))
+
+# Legacy provider aliases (kept for backwards compatibility)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", AEGIS_LLM_API_KEY).strip()
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", AEGIS_LLM_API_KEY).strip()
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", AEGIS_LLM_PROVIDER).lower()
+
+# CORS (Restricted origin; empty defaults to same-origin / matched-host)
+CORS_ORIGIN = os.getenv("CORS_ORIGIN", "").strip()
+
+# Contextual Risk Prioritization Weights (sum = 1.0)
+SCORING_WEIGHTS_SOURCE = os.getenv("SCORING_WEIGHTS_SOURCE", "default").lower()  # default | calibrated
+WEIGHT_CVSS = float(os.getenv("WEIGHT_CVSS", "0.35"))
+WEIGHT_EPSS = float(os.getenv("WEIGHT_EPSS", "0.30"))
+WEIGHT_EXPOSURE = float(os.getenv("WEIGHT_EXPOSURE", "0.20"))
+WEIGHT_CRITICALITY = float(os.getenv("WEIGHT_CRITICALITY", "0.15"))
+
+# FAIR-Style Quantitative Loss Parameters (User-Configurable)
+FAIR_SIMULATIONS = int(os.getenv("FAIR_SIMULATIONS", "1000"))
+FAIR_SEED = int(os.getenv("FAIR_SEED", "42"))
+FAIR_LOSS_MIN = float(os.getenv("FAIR_LOSS_MIN", "5000.0"))
+FAIR_LOSS_MODE = float(os.getenv("FAIR_LOSS_MODE", "25000.0"))
+FAIR_LOSS_MAX = float(os.getenv("FAIR_LOSS_MAX", "150000.0"))
 
 
-def _normalize_host(raw: str) -> str:
+
+def normalize_host(raw: str) -> str:
     """
     Turn URLs, host:port strings, bracketed IPv6, and trailing-dot hostnames
     into a canonical lowercase hostname or compressed IP address.
-    
-    Examples:
-    - '::1' -> '::1'
-    - '[::1]:3000' -> '::1'
-    - 'http://[::1]:3000/path' -> '::1'
-    - '127.0.0.1:3000' -> '127.0.0.1'
-    - 'LOCALHOST:3000' -> 'localhost'
-    - 'example.com.' -> 'example.com'
     """
     val = (raw or "").strip()
     if not val:
@@ -88,18 +179,49 @@ def _normalize_host(raw: str) -> str:
 
     return host
 
+_normalize_host = normalize_host
+
+
+def is_public_deployment() -> bool:
+    """Return True if running in a public cloud hosting environment (Render, Railway, Fly, Heroku, Cloud Run, etc.)."""
+    if os.environ.get("AEGIS_ALLOW_ACTIVE", "").lower() in ("true", "1", "yes"):
+        return False
+    return bool(
+        os.environ.get("RENDER")
+        or os.environ.get("AEGIS_PUBLIC_ENV")
+        or os.environ.get("AEGIS_PUBLIC_DEPLOYMENT")
+        or os.environ.get("AEGIS_DISABLE_ACTIVE_SCAN")
+        or os.environ.get("RAILWAY_ENVIRONMENT")
+        or os.environ.get("FLY_APP_NAME")
+        or os.environ.get("DYNO")
+        or os.environ.get("K_SERVICE")
+        or os.environ.get("VERCEL")
+        or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
+        or os.environ.get("AWS_EXECUTION_ENV")
+        or os.environ.get("WEBSITE_SITE_NAME")
+        or (os.environ.get("ENVIRONMENT", "").lower() == "production")
+        or (os.environ.get("NODE_ENV", "").lower() == "production")
+        or (os.environ.get("FLASK_ENV", "").lower() == "production")
+    )
+
 
 def load_allowlist() -> set[str]:
+    """Read targets.allowlist and return normalized allowed targets."""
+    is_public = is_public_deployment()
     if not ALLOWLIST_PATH.exists():
-        raise FileNotFoundError(
-            f"Missing {ALLOWLIST_PATH}. Create it and list allowed hosts, one per line."
-        )
+        if is_public:
+            return set()
+        return {"localhost", "127.0.0.1", "::1"}
+    
     allowed: set[str] = set()
     for line in ALLOWLIST_PATH.read_text(encoding="utf-8").splitlines():
         line = line.split("#", 1)[0].strip()
         if line:
-            norm = _normalize_host(line)
+            norm = normalize_host(line)
             if norm:
+                # Strip loopback and private entries on public cloud deployments
+                if is_public and norm in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+                    continue
                 allowed.add(norm)
     return allowed
 
@@ -109,22 +231,41 @@ def get_target_allowlist() -> set[str]:
     return load_allowlist()
 
 
-
-def is_target_allowed(target: str) -> bool:
-    host = _normalize_host(target)
-    if not host:
+def is_target_allowed_for_active_scan(target: str) -> bool:
+    """
+    Check if a target is authorized for active (port probing / Nmap) scans.
+    Allowed only if the target is:
+    1. In targets.allowlist (e.g. localhost, 127.0.0.1, internal test labs), OR
+    2. Verified via cryptographic domain ownership verification.
+    """
+    normalized = normalize_host(target)
+    if not normalized:
         return False
-    allowed = load_allowlist()
-    aliases = {host}
-    if host in {"localhost", "127.0.0.1", "::1"}:
-        aliases.update({"localhost", "127.0.0.1", "::1"})
-    if bool(aliases & allowed):
-        return True
-    
-    # Check if domain has been ownership-verified
+
+    is_public = is_public_deployment()
+    if is_public:
+        # Loopback and private IPs are strictly prohibited on public deployments
+        if normalized in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+            return False
+        try:
+            ip_obj = ipaddress.ip_address(normalized)
+            if ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_link_local or ip_obj.is_reserved:
+                return False
+        except ValueError:
+            pass
+
+    # Check allowlist
+    try:
+        if normalized in load_allowlist():
+            return True
+    except Exception:
+        if not is_public and normalized in {"localhost", "127.0.0.1", "::1"}:
+            return True
+
+    # Check domain ownership verification store
     try:
         from verification.verify import is_domain_verified
-        if is_domain_verified(host):
+        if is_domain_verified(normalized):
             return True
     except Exception:
         pass
@@ -132,9 +273,14 @@ def is_target_allowed(target: str) -> bool:
     return False
 
 
+def is_target_allowed(target: str) -> bool:
+    """Alias matching reference project contract."""
+    return is_target_allowed_for_active_scan(target)
+
+
 def require_allowed_target(target: str) -> str:
     """Return the normalized host, or raise if it is not on the allowlist."""
-    host = _normalize_host(target)
+    host = normalize_host(target)
     if not host:
         raise ValueError("Target is empty.")
     if not is_target_allowed(host):
@@ -143,6 +289,8 @@ def require_allowed_target(target: str) -> str:
         )
     return host
 
+_normalize_host = normalize_host
+
 
 def is_loopback(host: str) -> bool:
-    return _normalize_host(host) in {"localhost", "127.0.0.1", "::1"}
+    return normalize_host(host) in {"localhost", "127.0.0.1", "::1"}

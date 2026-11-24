@@ -1,29 +1,24 @@
 """
-Domain ownership verification module.
+AEGIS-AI Cryptographic Domain Ownership Verification Module.
 
-Security terms explained for 3rd semester students:
-- Ownership Verification: A challenge-response mechanism (similar to Let's Encrypt or Google Search Console)
-  that requires a user to prove administrative control over a DNS zone or web root before authorizing active scans.
-- DNS TXT Record: A type of DNS entry used to associate arbitrary human or machine-readable text with a domain name.
-- .well-known URI: Standardized directory (RFC 8615) for site-wide metadata and automated verification challenges.
+Enforces authorized testing boundaries. Users must prove administrative control over
+a target domain via DNS TXT record (_aegis-verify.<domain>) or HTTP token challenge
+(/.well-known/aegis-verify.txt) before active port scans are permitted.
 """
 
 from __future__ import annotations
 
 import json
-import re
 import secrets
 import subprocess
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from config import DATA_DIR
+from config import DATA_DIR, VERIFICATION_TTL_SECONDS, normalize_host
 from discovery.safe_fetch import safe_fetch, SafeFetchError
 
 VERIFIED_TARGETS_FILE = DATA_DIR / "verified_targets.json"
-VERIFICATION_TTL_SECONDS = 30 * 86400  # 30 days validity
 
 
 def _load_verified_data() -> dict[str, dict[str, Any]]:
@@ -37,37 +32,50 @@ def _load_verified_data() -> dict[str, dict[str, Any]]:
 
 
 def _save_verified_data(data: dict[str, dict[str, Any]]) -> None:
-    """Save the verified targets store."""
+    """Save the verified targets store safely."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    VERIFIED_TARGETS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    try:
+        VERIFIED_TARGETS_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def is_domain_verified(domain: str) -> bool:
-    """Check if a domain is currently verified and within its 30-day validity window."""
-    clean_domain = domain.strip().lower()
+    """
+    Check if a domain is currently verified and within its 30-day validity window.
+    Fails closed if expired, unverified, or not found.
+    """
+    clean_domain = normalize_host(domain)
+    if not clean_domain:
+        return False
+
     data = _load_verified_data()
     record = data.get(clean_domain)
-    if not record:
-        return False
-    
-    if not record.get("verified"):
+    if not record or not record.get("verified"):
         return False
 
     expires_at = record.get("expires_at", 0)
     if time.time() > expires_at:
-        return False  # Expired
+        return False  # Expired after 30 days
 
     return True
 
 
 def start_verification(domain: str) -> dict[str, str]:
     """
-    Generate a cryptographic token and print instructions for DNS TXT and HTTP verification.
+    Generate a cryptographic challenge token and return instructions
+    for DNS TXT and HTTP .well-known verification.
     """
-    clean_domain = domain.strip().lower()
-    data = _load_verified_data()
+    clean_domain = normalize_host(domain)
+    if not clean_domain:
+        raise ValueError("Invalid target domain for verification.")
 
-    token = secrets.token_urlsafe(24)
+    data = _load_verified_data()
+    existing = data.get(clean_domain, {})
+    
+    # Reuse valid token if one was created recently, or generate fresh
+    token = existing.get("token") or secrets.token_urlsafe(24)
+
     record = {
         "domain": clean_domain,
         "token": token,
@@ -80,70 +88,100 @@ def start_verification(domain: str) -> dict[str, str]:
     data[clean_domain] = record
     _save_verified_data(data)
 
-    txt_record_name = f"_attacksurface-verify.{clean_domain}"
-    well_known_url = f"https://{clean_domain}/.well-known/attacksurface-verify.txt"
+    txt_record_name = f"_aegis-verify.{clean_domain}"
+    well_known_url = f"https://{clean_domain}/.well-known/aegis-verify.txt"
 
-    instructions = {
+    return {
         "domain": clean_domain,
         "token": token,
         "dns_record": txt_record_name,
         "dns_value": token,
         "file_url": well_known_url,
         "file_content": token,
+        "dns_txt_record": {
+            "host": txt_record_name,
+            "value": token,
+        },
+        "http_challenge": {
+            "url": well_known_url,
+            "content": token,
+        },
+        "instructions": (
+            f"Add a DNS TXT record named '{txt_record_name}' with value '{token}', OR "
+            f"host a file at '{well_known_url}' containing the token."
+        )
     }
-    return instructions
 
 
 def _check_dns_txt_record(domain: str, expected_token: str) -> bool:
-    """Query DNS TXT records for _attacksurface-verify.<domain> using standard nslookup."""
-    txt_host = f"_attacksurface-verify.{domain}"
-    try:
-        # Run nslookup -type=TXT
-        proc = subprocess.run(
-            ["nslookup", "-type=TXT", txt_host],
-            capture_output=True,
-            text=True,
-            timeout=8,
-        )
-        output = proc.stdout
-        if expected_token in output:
-            return True
-    except Exception:
-        pass
+    """
+    Check DNS TXT record using Cloudflare DoH (works on serverless / Vercel),
+    with fallback to local nslookup. Checks both _aegis-verify and legacy _attacksurface-verify prefixes.
+    """
+    candidate_hosts = [f"_aegis-verify.{domain}", f"_attacksurface-verify.{domain}"]
+
+    for txt_host in candidate_hosts:
+        # 1. Cloudflare DNS-over-HTTPS check (OS-independent and serverless safe)
+        try:
+            doh_url = f"https://cloudflare-dns.com/dns-query?name={txt_host}&type=TXT"
+            resp = safe_fetch(doh_url, headers={"Accept": "application/dns-json"}, timeout=4.0)
+            if resp.status_code == 200:
+                answers = resp.json().get("Answer", [])
+                for ans in answers:
+                    data_val = str(ans.get("data", "")).strip('"')
+                    if expected_token in data_val:
+                        return True
+        except Exception:
+            pass
+
+        # 2. Local nslookup fallback
+        try:
+            proc = subprocess.run(
+                ["nslookup", "-type=TXT", txt_host],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if expected_token in proc.stdout:
+                return True
+        except Exception:
+            pass
+
     return False
 
 
 def _check_well_known_file(domain: str, expected_token: str) -> bool:
-    """Fetch https://<domain>/.well-known/attacksurface-verify.txt using safe_fetch."""
-    url = f"https://{domain}/.well-known/attacksurface-verify.txt"
-    try:
-        response = safe_fetch(url, timeout=5.0)
-        if response.status_code == 200:
-            content = response.text.strip()
-            if expected_token in content:
-                return True
-    except SafeFetchError:
-        pass
-    except Exception:
-        pass
+    """Fetch /.well-known verification file via safe_fetch."""
+    candidate_urls = [
+        f"https://{domain}/.well-known/aegis-verify.txt",
+        f"https://{domain}/.well-known/attacksurface-verify.txt",
+    ]
+    for url in candidate_urls:
+        try:
+            response = safe_fetch(url, timeout=5.0)
+            if response.status_code == 200:
+                if expected_token in response.text.strip():
+                    return True
+        except (SafeFetchError, Exception):
+            pass
     return False
 
 
 def check_verification(domain: str) -> tuple[bool, str]:
     """
-    Check both DNS TXT record and .well-known HTTP file to verify domain control.
-    Returns (success, message).
+    Verify ownership by checking both DNS TXT and HTTP .well-known challenges.
+    Returns (success: bool, message: str).
     """
-    clean_domain = domain.strip().lower()
+    clean_domain = normalize_host(domain)
     data = _load_verified_data()
     record = data.get(clean_domain)
 
     if not record or not record.get("token"):
-        return False, f"No verification in progress for '{clean_domain}'. Run 'python -m verification start {clean_domain}' first."
+        return False, f"No verification challenge in progress for '{clean_domain}'. Start verification first."
 
     token = record["token"]
 
-    # 1. Check DNS TXT
+    # Check DNS TXT
     if _check_dns_txt_record(clean_domain, token):
         now = time.time()
         record["verified"] = True
@@ -152,9 +190,9 @@ def check_verification(domain: str) -> tuple[bool, str]:
         record["expires_at"] = now + VERIFICATION_TTL_SECONDS
         data[clean_domain] = record
         _save_verified_data(data)
-        return True, f"Domain '{clean_domain}' successfully verified via DNS TXT record! Active scans are now authorized for 30 days."
+        return True, f"Domain '{clean_domain}' successfully verified via DNS TXT record! Active scanning authorized for 30 days."
 
-    # 2. Check HTTP .well-known file
+    # Check HTTP .well-known
     if _check_well_known_file(clean_domain, token):
         now = time.time()
         record["verified"] = True
@@ -163,29 +201,25 @@ def check_verification(domain: str) -> tuple[bool, str]:
         record["expires_at"] = now + VERIFICATION_TTL_SECONDS
         data[clean_domain] = record
         _save_verified_data(data)
-        return True, f"Domain '{clean_domain}' successfully verified via HTTP .well-known file! Active scans are now authorized for 30 days."
+        return True, f"Domain '{clean_domain}' successfully verified via HTTP .well-known token! Active scanning authorized for 30 days."
 
-    return False, f"Verification failed for '{clean_domain}'. Neither DNS TXT record (_attacksurface-verify.{clean_domain}) nor https://{clean_domain}/.well-known/attacksurface-verify.txt matched the expected token."
-
-
-def generate_verification_token(domain: str) -> str:
-    """Generate or retrieve the verification token for a domain."""
-    res = start_verification(domain)
-    return res["token"]
-
-
-def check_domain_verification(domain: str) -> tuple[bool, str]:
-    """Alias for check_verification(domain)."""
-    return check_verification(domain)
+    return False, (
+        f"Verification failed for '{clean_domain}'. Neither the DNS TXT record (_aegis-verify.{clean_domain}) "
+        f"nor https://{clean_domain}/.well-known/aegis-verify.txt matched the expected token."
+    )
 
 
 def load_verified_targets() -> dict[str, dict[str, Any]]:
-    """Return all currently active verified target records."""
+    """Return all currently active and non-expired verified target records."""
     data = _load_verified_data()
     return {k: v for k, v in data.items() if is_domain_verified(k)}
 
 
-def get_verification_record(domain: str) -> dict[str, Any] | None:
-    """Return the raw verification record for a domain if present."""
-    return _load_verified_data().get(domain.strip().lower())
+def generate_verification_token(domain: str) -> str:
+    """Convenience alias: generate and store challenge token for a domain, returning token string."""
+    info = start_verification(domain)
+    return str(info.get("token", ""))
+
+
+check_domain_verification = check_verification
 

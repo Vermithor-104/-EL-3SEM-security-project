@@ -179,3 +179,66 @@ def enrich_cves(cves: list[CveRecord], notes: list[str] | None = None) -> list[C
 
     return cves
 
+
+def enrich_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Enrich an array of finding dictionaries with CISA KEV and EPSS intelligence."""
+    if not findings or not isinstance(findings, list):
+        return []
+
+    valid_findings = [f for f in findings if isinstance(f, dict)]
+    if not valid_findings:
+        return []
+
+    cve_ids: list[str] = []
+    for f in valid_findings:
+        for cve in f.get("related_cves", []):
+            if cve and cve not in cve_ids:
+                cve_ids.append(cve)
+
+    kev_catalog: set[str] = set()
+    try:
+        kev_catalog = _load_cisa_kev_catalog()
+    except Exception:
+        pass
+
+    epss_scores: dict[str, float] = {}
+    if cve_ids:
+        try:
+            epss_scores = _get_epss_scores(cve_ids)
+        except Exception:
+            pass
+
+    for f in valid_findings:
+        raw_cves = f.get("related_cves", [])
+        if isinstance(raw_cves, str):
+            f_cves = [raw_cves]
+        elif isinstance(raw_cves, list):
+            f_cves = [str(c) for c in raw_cves if c]
+        else:
+            f_cves = []
+        is_kev = bool(f.get("in_cisa_kev") or f.get("kev") or any(c in kev_catalog for c in f_cves))
+        try:
+            existing_epss = float(f.get("epss_probability") or f.get("epss") or 0.0)
+        except (ValueError, TypeError):
+            existing_epss = 0.0
+        cve_epss = [epss_scores.get(c, 0.0) for c in f_cves]
+        max_epss = max(cve_epss + [existing_epss], default=0.0)
+        f["kev"] = is_kev
+        f["in_cisa_kev"] = is_kev
+        f["epss"] = max_epss
+        f["epss_score"] = max_epss
+        f["epss_probability"] = max_epss
+        if is_kev:
+            f["cisa_kev_status"] = "Actively Exploited In Wild"
+        if max_epss > 0:
+            f["epss_percentile"] = f"{round(max_epss * 100, 1)}%"
+        else:
+            f["epss_percentile"] = "0.0%"
+    return valid_findings
+
+
+load_cisa_kev_catalog = _load_cisa_kev_catalog
+fetch_epss_scores = _get_epss_scores
+
+
+

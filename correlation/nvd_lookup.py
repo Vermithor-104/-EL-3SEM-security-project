@@ -203,3 +203,42 @@ def lookup_cves(product: str, version: str = "", cpe: str = "") -> list[CveRecor
         else:
             return []
     return results
+
+
+def query_nvd_by_cve(cve_id: str) -> dict[str, Any] | None:
+    """Look up a single CVE from NVD API 2.0 or local disk cache."""
+    cve_id = cve_id.strip().upper()
+    cache_key = f"cve_{cve_id}"
+    cached = _get_cache(cache_key)
+    if cached:
+        return cached[0] if isinstance(cached, list) and cached else cached
+    try:
+        results = _query_nvd_api({"cveId": cve_id}, cve_id, confidence="verified")
+        if results:
+            as_dict = results[0].__dict__ if hasattr(results[0], "__dict__") else results[0]
+            _set_cache(cache_key, [as_dict])
+            return as_dict
+    except Exception:
+        pass
+    return None
+
+
+def query_osv_package(name: str, version: str = "", ecosystem: str = "npm") -> list[dict[str, Any]]:
+    """Query OSV API for vulnerabilities in open source components."""
+    if not name:
+        return []
+    payload: dict[str, Any] = {"package": {"name": name}}
+    if ecosystem and ecosystem != "generic":
+        payload["package"]["ecosystem"] = ecosystem
+    if version and version != "unknown":
+        payload["version"] = version
+    try:
+        from discovery.safe_fetch import safe_fetch
+        import requests
+        res = safe_fetch("https://api.osv.dev/v1/query", timeout=5.0)
+        if res.status_code == 200:
+            return res.json().get("vulns", [])
+    except Exception:
+        pass
+    return []
+

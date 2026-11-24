@@ -9,8 +9,15 @@ from __future__ import annotations
 from typing import Any
 
 
-def generate_nginx_hardening(findings: list[dict[str, Any]], target: str = "example.com") -> str:
+def _norm_args(findings: Any, target: str) -> tuple[list[dict[str, Any]], str]:
+    if isinstance(findings, str):
+        return [], findings
+    return findings or [], target
+
+
+def generate_nginx_hardening(findings: list[dict[str, Any]] | str | None = None, target: str = "example.com") -> str:
     """Generate production-ready Nginx hardening configuration block."""
+    findings, target = _norm_args(findings, target)
     snippets = [
         f"# ========================================================",
         f"# NGINX DEFENSIVE SECURITY HARDENING FOR: {target}",
@@ -42,8 +49,9 @@ def generate_nginx_hardening(findings: list[dict[str, Any]], target: str = "exam
     return "\n".join(snippets)
 
 
-def generate_apache_hardening(findings: list[dict[str, Any]], target: str = "example.com") -> str:
+def generate_apache_hardening(findings: list[dict[str, Any]] | str | None = None, target: str = "example.com") -> str:
     """Generate production-ready Apache (.htaccess / httpd.conf) configuration."""
+    findings, target = _norm_args(findings, target)
     snippets = [
         f"# ========================================================",
         f"# APACHE HTTPD SECURITY HARDENING FOR: {target}",
@@ -77,8 +85,9 @@ def generate_apache_hardening(findings: list[dict[str, Any]], target: str = "exa
     return "\n".join(snippets)
 
 
-def generate_caddy_hardening(findings: list[dict[str, Any]], target: str = "example.com") -> str:
+def generate_caddy_hardening(findings: list[dict[str, Any]] | str | None = None, target: str = "example.com") -> str:
     """Generate Caddyfile configuration."""
+    findings, target = _norm_args(findings, target)
     snippets = [
         f"# Caddyfile Hardening Block for {target}",
         f"{target} {{",
@@ -101,8 +110,9 @@ def generate_caddy_hardening(findings: list[dict[str, Any]], target: str = "exam
     return "\n".join(snippets)
 
 
-def generate_cloudflare_rules(findings: list[dict[str, Any]], target: str = "example.com") -> str:
+def generate_cloudflare_rules(findings: list[dict[str, Any]] | str | None = None, target: str = "example.com") -> str:
     """Generate Cloudflare Transform Rules or Worker Snippet."""
+    findings, target = _norm_args(findings, target)
     snippets = [
         f"// Cloudflare Worker / Transform Rule for HTTP Security Response Headers",
         f"// Target: {target}",
@@ -135,8 +145,11 @@ def generate_cloudflare_rules(findings: list[dict[str, Any]], target: str = "exa
     return "\n".join(snippets)
 
 
-def generate_node_helmet(findings: list[dict[str, Any]]) -> str:
+def generate_node_helmet(findings: list[dict[str, Any]] | str | None = None) -> str:
     """Generate Node.js Express + Helmet security middleware setup."""
+    if isinstance(findings, str):
+        findings = []
+    findings = findings or []
     snippets = [
         "// Express.js Defense Setup using Helmet & Security Best Practices",
         "const express = require('express');",
@@ -215,3 +228,23 @@ def generate_firewall_rules(ports: list[int] | None = None) -> str:
         "sudo ufw status verbose",
     ])
     return "\n".join(snippets)
+
+
+generate_express_helmet_hardening = generate_node_helmet
+
+
+def generate_flask_talisman_hardening(findings: list[dict[str, Any]] | None = None) -> str:
+    """Generate Flask-Talisman security headers configuration snippet."""
+    return """from flask import Flask
+from flask_talisman import Talisman
+
+app = Flask(__name__)
+csp = {
+    'default-src': '\'self\'',
+    'script-src': '\'self\'',
+    'style-src': '\'self\' \'unsafe-inline\'',
+    'img-src': '\'self\' data:',
+}
+Talisman(app, content_security_policy=csp, force_https=True)
+"""
+

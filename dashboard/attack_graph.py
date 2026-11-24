@@ -1,21 +1,26 @@
 """
-Field Report Exposure Diagram Component.
-Renders a clean, layered left-to-right architectural mapping:
-Target -> IPs -> Open Ports / Services -> Findings.
-Modern sans-serif typography, rounded nodes, theme-aware palette.
+Interactive Bayesian Attack Graph & Exploit Path Component.
+
+Inspired by:
+- Poolsappasit et al. 2012 (Dynamic Security Risk Management Using Bayesian Attack Graphs)
+- Jha, Sheyner, & Wing 2002 (Formal Analyses of Attack Graphs / Minimal Critical Chokepoints)
+
+Renders an animated, high-tech D3.js visual graph highlighting:
+- Bayesian node compromise probabilities P(compromise) via Noisy-OR.
+- The mathematically most probable attack path via Dijkstra (-ln p).
+- Minimum critical chokepoints / cut-set needed to sever attacker paths.
 """
 
 from __future__ import annotations
 
 import html
 import json
-from typing import Any
-from dashboard.theme import get_theme_tokens
+from typing import Any, Dict, List, Optional
 
-
-def esc(text: Any) -> str:
-    """Escapes untrusted content for safe HTML/SVG inclusion."""
-    return html.escape(str(text if text is not None else ""), quote=True)
+from dashboard.bayesian_attack_graph import (
+    BayesianAttackGraph,
+    build_attack_graph_from_findings,
+)
 
 
 def render_attack_surface_graph_html(
@@ -24,364 +29,466 @@ def render_attack_surface_graph_html(
     ports: list[Any] | None = None,
     subdomains: list[str] | None = None,
     ips: list[str] | None = None,
-    theme_mode: str = "light",
+    patched_node_id: Optional[str] = None,
 ) -> str:
-    """Generate a clean, flat left-to-right SVG diagram with details inspector."""
-    tokens = get_theme_tokens(theme_mode)
+    """Generate interactive HTML5 / SVG Bayesian Network Attack Graph."""
+    def _safe(text: Any) -> str:
+        return html.escape(str(text or ""), quote=True)
 
-    # Clean & safely escape inputs
-    safe_target = esc(str(target or "localhost").strip())
-    clean_ips = [esc(str(ip).strip()) for ip in (ips or []) if ip][:6]
-    if not clean_ips:
-        clean_ips = ["127.0.0.1"] if "localhost" in safe_target.lower() else ["Unresolved"]
+    # 1. Build and evaluate empirical Bayesian Attack Graph
+    bag = build_attack_graph_from_findings(
+        target=target,
+        findings=findings,
+        ports=ports,
+        subdomains=subdomains,
+    )
 
-    clean_ports = []
-    for p in (ports or [])[:8]:
-        if isinstance(p, dict):
-            clean_ports.append({
-                "port": esc(p.get("port", "unknown")),
-                "service": esc(p.get("service", "tcp")),
-                "product": esc(p.get("product", "")),
-            })
+    # Re-evaluate with optional patched node if interactive simulation active
+    patches = {patched_node_id} if patched_node_id else set()
+    node_probs = bag.evaluate_bayesian_probabilities(patched_nodes=patches)
+
+    # 2. Compute Dijkstra most-probable path (-ln p) and minimal chokepoints
+    most_probable_path = bag.find_most_probable_path(source="attacker_root", goal="crown_jewels", patched_nodes=patches)
+    chokepoints = bag.compute_minimal_chokepoints(source="attacker_root", goal="crown_jewels")
+
+    critical_path_nodes = set(most_probable_path.path_nodes) if most_probable_path else set()
+    critical_edges_pairs = set()
+    if most_probable_path and len(most_probable_path.path_nodes) > 1:
+        for u, v in zip(most_probable_path.path_nodes[:-1], most_probable_path.path_nodes[1:]):
+            critical_edges_pairs.add((u, v))
+
+    chokepoint_ids = set(chokepoints.chokepoint_nodes)
+
+    # 3. Assemble visualization nodes
+    nodes = []
+    for nid, node in bag.nodes.items():
+        prob = node_probs.get(nid, 0.0)
+        prob_pct = f"{round(prob * 100, 1)}%"
+
+        is_crit = nid in critical_path_nodes
+        is_choke = nid in chokepoint_ids
+
+        # Visual styling by node type
+        if node.node_type == "attacker":
+            color = "#ef4444"
+            radius = 26
+            icon = "👤"
+        elif node.node_type == "ingress":
+            color = "#38bdf8"
+            radius = 24
+            icon = "🎯"
+        elif node.node_type == "port":
+            color = "#f59e0b"
+            radius = 18
+            icon = "🔌"
+        elif node.node_type == "vulnerability":
+            color = "#ef4444" if prob >= 0.50 else ("#f97316" if prob >= 0.20 else "#eab308")
+            radius = 20 if is_crit else 16
+            icon = "🚨" if is_crit else "⚠️"
+        elif node.node_type == "privilege":
+            color = "#a855f7"
+            radius = 22
+            icon = "🔑"
+        elif node.node_type == "goal":
+            color = "#dc2626"
+            radius = 28
+            icon = "🏆"
         else:
-            clean_ports.append({"port": esc(p), "service": "open", "product": ""})
-    if not clean_ports:
-        clean_ports = [{"port": "Passive", "service": "No probed ports", "product": ""}]
+            color = "#94a3b8"
+            radius = 16
+            icon = "🌐"
 
-    clean_findings = findings[:10]
+        desc = f"{node.description} | P(Compromise): {prob_pct}"
+        if is_choke:
+            desc += " [STRATEGIC CHOKEPOINT - Remediating breaks attack path]"
+        if is_crit:
+            desc += " [ON MOST PROBABLE ATTACK PATH]"
 
-    # Column X coordinates
-    x_col1 = 40     # Target
-    x_col2 = 230    # IPs
-    x_col3 = 420    # Ports
-    x_col4 = 630    # Findings
-
-    def compute_y_positions(count: int, row_height: int = 38, offset_top: int = 50) -> list[int]:
-        return [offset_top + i * row_height for i in range(count)]
-
-    y_target = [120]
-    y_ips = compute_y_positions(len(clean_ips), row_height=42, offset_top=60)
-    y_ports = compute_y_positions(len(clean_ports), row_height=42, offset_top=50)
-    y_findings = compute_y_positions(max(1, len(clean_findings)), row_height=44, offset_top=40)
-
-    total_height = max(340, max(y_ips[-1] if y_ips else 0, y_ports[-1] if y_ports else 0, y_findings[-1] if y_findings else 0) + 70)
-
-    nodes: list[dict[str, Any]] = []
-    links: list[dict[str, Any]] = []
-
-    # 1. Target node
-    nodes.append({
-        "id": "node_target",
-        "col": 1,
-        "x": x_col1,
-        "y": y_target[0],
-        "label": safe_target[:24] + ("..." if len(safe_target) > 24 else ""),
-        "full_name": safe_target,
-        "type": "Target",
-        "details": f"Target: {safe_target}\\nScope: Verified boundary",
-    })
-
-    # 2. IP nodes
-    for idx, (ip_str, y_pos) in enumerate(zip(clean_ips, y_ips)):
-        node_id = f"node_ip_{idx}"
         nodes.append({
-            "id": node_id,
-            "col": 2,
-            "x": x_col2,
-            "y": y_pos,
-            "label": ip_str,
-            "full_name": ip_str,
-            "type": "Network Endpoint",
-            "details": f"IP: {ip_str}\\nResolution: DNS A/AAAA record",
+            "id": nid,
+            "name": _safe(f"{node.name} ({prob_pct})"),
+            "raw_name": _safe(node.name),
+            "prob_pct": prob_pct,
+            "prob_val": prob,
+            "type": node.node_type,
+            "color": "#f59e0b" if is_choke else color,
+            "radius": radius,
+            "icon": icon,
+            "is_critical": is_crit,
+            "is_chokepoint": is_choke,
+            "desc": _safe(desc),
         })
-        links.append({"source": "node_target", "target": node_id})
 
-    # 3. Port nodes
-    for idx, (port_obj, y_pos) in enumerate(zip(clean_ports, y_ports)):
-        node_id = f"node_port_{idx}"
-        p_label = f":{port_obj['port']} ({port_obj['service'][:8]})"
-        nodes.append({
-            "id": node_id,
-            "col": 3,
-            "x": x_col3,
-            "y": y_pos,
-            "label": p_label,
-            "full_name": f"Port {port_obj['port']}/{port_obj['service']}",
-            "type": "Service / Port",
-            "details": f"Port: {port_obj['port']}\\nService: {port_obj['service']}\\nBanner: {port_obj['product'] or 'N/A'}",
+    # 4. Assemble visualization links
+    links = []
+    for edge in bag.edges:
+        is_crit_edge = (edge.source, edge.target) in critical_edges_pairs
+        color = "#ef4444" if is_crit_edge else "rgba(56, 189, 248, 0.35)"
+        width = 3.0 if is_crit_edge else 1.4
+
+        links.append({
+            "source": edge.source,
+            "target": edge.target,
+            "prob": edge.exploit_probability,
+            "label": _safe(f"{edge.label or ''} (p={edge.exploit_probability:.0%})"),
+            "color": color,
+            "width": width,
+            "is_critical": is_crit_edge,
         })
-        parent_ip = f"node_ip_{min(idx, len(clean_ips)-1)}"
-        links.append({"source": parent_ip, "target": node_id})
 
-    # 4. Finding nodes
-    if clean_findings:
-        for idx, (f_obj, y_pos) in enumerate(zip(clean_findings, y_findings)):
-            node_id = f"node_finding_{idx}"
-            sev = esc(str(f_obj.get("severity") or "Info").capitalize())
-            title = esc(str(f_obj.get("title") or f"Finding #{idx+1}").strip())
-            short_title = title[:24] + ("..." if len(title) > 24 else "")
-            cves = esc(", ".join(f_obj.get("related_cves") or []) or "None")
-            exploit = esc(str(f_obj.get("exploitability") or "Standard"))
-
-            sev_key = f"sev_{sev[:4].lower()}"
-            sev_color = tokens.get(sev_key, tokens["sev_info"])
-
-            nodes.append({
-                "id": node_id,
-                "col": 4,
-                "x": x_col4,
-                "y": y_pos,
-                "label": short_title,
-                "full_name": title,
-                "type": f"Finding ({sev})",
-                "severity": sev,
-                "color": sev_color,
-                "details": f"Finding: {title}\\nSeverity: {sev}\\nRelated CVEs: {cves}\\nExploitability: {exploit}",
-            })
-
-            if clean_ports and "Passive" not in clean_ports[0]["port"]:
-                parent_port = f"node_port_{idx % len(clean_ports)}"
-                links.append({"source": parent_port, "target": node_id})
-            else:
-                links.append({"source": "node_target", "target": node_id})
-    else:
-        node_id = "node_finding_zero"
-        nodes.append({
-            "id": node_id,
-            "col": 4,
-            "x": x_col4,
-            "y": 120,
-            "label": "No findings logged",
-            "full_name": "Zero Findings",
-            "type": "Status",
-            "severity": "Info",
-            "color": tokens["sev_info"],
-            "details": "No active vulnerabilities or misconfigurations logged.",
-        })
-        links.append({"source": "node_target", "target": node_id})
+    crown_jewels_prob = node_probs.get("crown_jewels", 0.0)
+    most_prob_p_str = f"{most_probable_path.path_probability:.1%}" if most_probable_path else "0.0% (Severed)"
+    choke_count = len(chokepoints.chokepoint_nodes)
 
     nodes_json = json.dumps(nodes)
     links_json = json.dumps(links)
 
-    html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<style>
-  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{
-    background-color: {tokens['bg_surface']};
-    color: {tokens['text_ink']};
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-size: 13px;
-    line-height: 1.4;
-    overflow-x: hidden;
-  }}
-  .exposure-wrap {{
-    display: flex;
-    border: 1px solid {tokens['border_hairline']};
-    border-radius: 8px;
-    background: {tokens['bg_surface']};
-    min-height: {total_height}px;
-    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-    overflow: hidden;
-  }}
-  .diagram-pane {{
-    flex: 1;
-    overflow-x: auto;
-    position: relative;
-    padding: 10px 0;
-  }}
-  .inspector-pane {{
-    width: 290px;
-    border-left: 1px solid {tokens['border_hairline']};
-    background: {tokens['bg_subtle']};
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-  }}
-  .inspector-header {{
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: {tokens['accent']};
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid {tokens['border_hairline']};
-    padding-bottom: 8px;
-    margin-bottom: 12px;
-  }}
-  .inspector-title {{
-    font-size: 14px;
-    font-weight: 600;
-    margin-bottom: 8px;
-    color: {tokens['text_ink']};
-    word-break: break-word;
-  }}
-  .inspector-body {{
-    font-size: 12px;
-    color: {tokens['text_muted']};
-    white-space: pre-wrap;
-    line-height: 1.5;
-  }}
-  .inspector-hint {{
-    font-size: 11px;
-    color: {tokens['text_subtle']};
-    margin-top: 16px;
-  }}
-  .col-label {{
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    fill: {tokens['text_subtle']};
-  }}
-  .conn-line {{
-    stroke: {tokens['border_strong']};
-    stroke-width: 1.2px;
-    fill: none;
-    transition: stroke 150ms ease, stroke-width 150ms ease;
-  }}
-  .conn-line.active {{
-    stroke: {tokens['accent']};
-    stroke-width: 2px;
-  }}
-  .node-box {{
-    fill: {tokens['bg_surface']};
-    stroke: {tokens['border_strong']};
-    stroke-width: 1px;
-    rx: 6px;
-    ry: 6px;
-    cursor: pointer;
-    transition: stroke 150ms ease, fill 150ms ease, filter 150ms ease;
-  }}
-  .node-box:hover, .node-box.selected {{
-    stroke: {tokens['accent']};
-    fill: {tokens['bg_hover']};
-  }}
-  .node-text {{
-    font-size: 12px;
-    font-weight: 500;
-    fill: {tokens['text_ink']};
-    pointer-events: none;
-  }}
-  .sev-mark {{
-    rx: 2px;
-    ry: 2px;
-  }}
-</style>
-</head>
-<body>
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <style>
+        body {{
+            margin: 0;
+            background: #090d16;
+            color: #f8fafc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }}
+        #graph-container {{
+            width: 100%;
+            height: 100vh;
+            min-height: 580px;
+            position: relative;
+            background: radial-gradient(circle at center, #0f172a 0%, #060911 100%);
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: inset 0 0 40px rgba(0,0,0,0.8);
+        }}
+        .grid-overlay {{
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-image: 
+                linear-gradient(rgba(56, 189, 248, 0.04) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(56, 189, 248, 0.04) 1px, transparent 1px);
+            background-size: 30px 30px;
+            pointer-events: none;
+        }}
+        .telemetry-banner {{
+            position: absolute;
+            top: 10px;
+            left: 14px;
+            right: 14px;
+            display: flex;
+            justify-content: space-between;
+            background: rgba(15, 23, 42, 0.90);
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 11px;
+            color: #94a3b8;
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }}
+        .stat-badge {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .stat-value {{
+            font-weight: 700;
+            color: #38bdf8;
+            font-family: monospace;
+            font-size: 12px;
+        }}
+        #tooltip {{
+            position: absolute;
+            display: none;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid #38bdf8;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #f8fafc;
+            pointer-events: none;
+            box-shadow: 0 4px 20px rgba(0, 242, 254, 0.25);
+            z-index: 100;
+            max-width: 290px;
+            backdrop-filter: blur(8px);
+        }}
+        .legend {{
+            position: absolute;
+            bottom: 12px;
+            left: 14px;
+            display: flex;
+            gap: 12px;
+            background: rgba(15, 23, 42, 0.85);
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            font-size: 11px;
+            color: #94a3b8;
+            backdrop-filter: blur(8px);
+        }}
+        .legend-item {{ display: flex; align-items: center; gap: 5px; }}
+        .legend-dot {{ width: 8px; height: 8px; border-radius: 50%; }}
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+    </head>
+    <body>
+    <div id="graph-container">
+        <div class="grid-overlay"></div>
+        <div class="telemetry-banner">
+            <div class="stat-badge">
+                <span>🎯 Crown Jewels Compromise Risk:</span>
+                <span class="stat-value" style="color:{'#ef4444' if crown_jewels_prob >= 0.50 else '#f59e0b'};">{crown_jewels_prob:.1%}</span>
+            </div>
+            <div class="stat-badge">
+                <span>⚡ Most-Probable Exploit Path:</span>
+                <span class="stat-value" style="color:#ef4444;">{most_prob_p_str}</span>
+            </div>
+            <div class="stat-badge">
+                <span>🛡️ Minimal Chokepoint Fixes:</span>
+                <span class="stat-value" style="color:#10b981;">{choke_count} strategic patch(es)</span>
+            </div>
+        </div>
 
-<div class="exposure-wrap">
-  <div class="diagram-pane">
-    <svg id="diagram-svg" width="840" height="{total_height}">
-      <text x="{x_col1}" y="25" class="col-label">1. Target</text>
-      <text x="{x_col2}" y="25" class="col-label">2. Resolved IPs</text>
-      <text x="{x_col3}" y="25" class="col-label">3. Open Services</text>
-      <text x="{x_col4}" y="25" class="col-label">4. Discovered Exposures</text>
+        <div id="tooltip"></div>
 
-      <g id="links-group"></g>
-      <g id="nodes-group"></g>
-    </svg>
-  </div>
+        <div class="legend">
+            <div class="legend-item"><span class="legend-dot" style="background:#ef4444;"></span> Critical Path</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span> Chokepoint Fix</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#a855f7;"></span> Internal Pivot</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#dc2626;"></span> Crown Jewels</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#38bdf8;"></span> Ingress Gateway</div>
+        </div>
 
-  <div class="inspector-pane">
-    <div>
-      <div class="inspector-header">Component Inspector</div>
-      <div id="insp-title" class="inspector-title">Select a node</div>
-      <div id="insp-body" class="inspector-body">Click any node in the exposure graph to inspect endpoint topology, verified boundaries, or finding details.</div>
+        <svg id="network-svg" width="100%" height="100%" style="min-height:500px;"></svg>
     </div>
-    <div class="inspector-hint">Layered linear topology: Left &rarr; Right</div>
-  </div>
-</div>
 
-<script>
-  const nodes = {nodes_json};
-  const links = {links_json};
-  const nodeMap = {{}};
-  nodes.forEach(n => {{ nodeMap[n.id] = n; }});
+    <script>
+    const nodes = {nodes_json};
+    const links = {links_json};
 
-  const linksGroup = document.getElementById('links-group');
-  const nodesGroup = document.getElementById('nodes-group');
-  const inspTitle = document.getElementById('insp-title');
-  const inspBody = document.getElementById('insp-body');
+    const container = document.getElementById('graph-container');
+    const width = Math.max(window.innerWidth || 0, container.clientWidth || 0, 900);
+    const height = Math.max(container.clientHeight || 0, 560);
 
-  const BOX_W = 160;
-  const BOX_H = 32;
+    function renderWithD3() {{
+        const svg = d3.select("#network-svg")
+            .attr("viewBox", [0, 0, width, height]);
 
-  links.forEach((link, idx) => {{
-    const s = nodeMap[link.source];
-    const t = nodeMap[link.target];
-    if (!s || !t) return;
+        const g = svg.append("g");
 
-    const x1 = s.x + BOX_W;
-    const y1 = s.y + BOX_H / 2;
-    const x2 = t.x;
-    const y2 = t.y + BOX_H / 2;
-    const dx = (x2 - x1) * 0.5;
+        // Force simulation
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id(d => d.id).distance(120))
+            .force("charge", d3.forceManyBody().strength(-280))
+            .force("center", d3.forceCenter(width / 2, height / 2 + 10))
+            .force("collision", d3.forceCollide().radius(d => d.radius + 16));
 
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    path.setAttribute('d', `M ${{x1}} ${{y1}} C ${{x1 + dx}} ${{y1}}, ${{x2 - dx}} ${{y2}}, ${{x2}} ${{y2}}`);
-    path.setAttribute('class', 'conn-line');
-    path.setAttribute('id', `link-${{s.id}}-${{t.id}}`);
-    path.dataset.source = s.id;
-    path.dataset.target = t.id;
-    linksGroup.appendChild(path);
-  }});
+        // Links
+        const link = g.append("g")
+            .selectAll("line")
+            .data(links)
+            .join("line")
+            .attr("stroke", d => d.color)
+            .attr("stroke-width", d => d.width)
+            .attr("stroke-dasharray", d => d.is_critical ? "none" : "3,3");
 
-  nodes.forEach(node => {{
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('transform', `translate(${{node.x}}, ${{node.y}})`);
-    g.setAttribute('id', `group-${{node.id}}`);
+        // Node groups
+        const node = g.append("g")
+            .selectAll(".node")
+            .data(nodes)
+            .join("g")
+            .attr("class", "node")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
 
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('width', BOX_W);
-    rect.setAttribute('height', BOX_H);
-    rect.setAttribute('class', 'node-box');
-    rect.setAttribute('id', `rect-${{node.id}}`);
+        // Outer Aura for Chokepoints and Critical Path
+        node.filter(d => d.is_chokepoint || d.is_critical)
+            .append("circle")
+            .attr("r", d => d.radius + 6)
+            .attr("fill", "none")
+            .attr("stroke", d => d.is_chokepoint ? "#f59e0b" : "#ef4444")
+            .attr("stroke-width", 2)
+            .attr("stroke-dasharray", d => d.is_chokepoint ? "4,2" : "none")
+            .attr("opacity", 0.85);
 
-    g.appendChild(rect);
+        // Glow Circles
+        node.append("circle")
+            .attr("r", d => d.radius + 3)
+            .attr("fill", d => d.color)
+            .attr("opacity", 0.22);
 
-    let textX = 10;
-    if (node.color) {{
-      const sq = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      sq.setAttribute('x', 8);
-      sq.setAttribute('y', 11);
-      sq.setAttribute('width', 9);
-      sq.setAttribute('height', 9);
-      sq.setAttribute('fill', node.color);
-      sq.setAttribute('class', 'sev-mark');
-      g.appendChild(sq);
-      textX = 22;
+        // Node body
+        node.append("circle")
+            .attr("r", d => d.radius)
+            .attr("fill", "#0f172a")
+            .attr("stroke", d => d.color)
+            .attr("stroke-width", 2.2);
+
+        // Labels
+        node.append("text")
+            .text(d => d.name)
+            .attr("x", 0)
+            .attr("y", d => d.radius + 14)
+            .attr("text-anchor", "middle")
+            .attr("fill", d => d.is_critical ? "#f87171" : "#cbd5e1")
+            .attr("font-size", "11px")
+            .attr("font-weight", d => d.is_critical ? "700" : "600")
+            .attr("pointer-events", "none");
+
+        // Icons
+        node.append("text")
+            .text(d => d.icon)
+            .attr("x", 0)
+            .attr("y", 4)
+            .attr("text-anchor", "middle")
+            .attr("font-size", d => d.radius > 20 ? "14px" : "11px")
+            .attr("pointer-events", "none");
+
+        // Tooltip
+        const tooltip = document.getElementById("tooltip");
+        node.on("mouseover", (event, d) => {{
+            tooltip.style.display = "block";
+            tooltip.innerHTML = `<div style="font-weight:700;color:${{d.color}};margin-bottom:2px;">${{d.icon}} ${{d.raw_name}}</div>
+                                 <div style="font-size:11px;color:#38bdf8;margin-bottom:4px;">Compromise Probability: <b>${{d.prob_pct}}</b></div>
+                                 <div style="font-size:11px;color:#94a3b8;">${{d.desc}}</div>`;
+        }})
+        .on("mousemove", (event) => {{
+            const rect = container.getBoundingClientRect();
+            tooltip.style.left = (event.clientX - rect.left + 15) + "px";
+            tooltip.style.top = (event.clientY - rect.top + 10) + "px";
+        }})
+        .on("mouseout", () => {{
+            tooltip.style.display = "none";
+        }});
+
+        simulation.on("tick", () => {{
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node
+                .attr("transform", d => `translate(${{d.x}},${{d.y}})`);
+        }});
+
+        function dragstarted(event, d) {{
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }}
+        function dragged(event, d) {{
+            d.fx = event.x;
+            d.fy = event.y;
+        }}
+        function dragended(event, d) {{
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }}
     }}
 
-    const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    txt.setAttribute('x', textX);
-    txt.setAttribute('y', 20);
-    txt.setAttribute('class', 'node-text');
-    txt.textContent = node.label;
-    g.appendChild(txt);
+    function renderFallbackSvg() {{
+        // Reliable pure-SVG fallback when external D3 CDN is blocked or loading
+        const svgEl = document.getElementById("network-svg");
+        if (!svgEl) return;
+        svgEl.setAttribute("viewBox", `0 0 ${{width}} ${{height}}`);
 
-    g.addEventListener('click', () => {{
-      document.querySelectorAll('.node-box').forEach(el => el.classList.remove('selected'));
-      rect.classList.add('selected');
+        const typeOrder = {{ 'attacker': 0, 'ingress': 1, 'port': 2, 'vulnerability': 3, 'privilege': 4, 'goal': 5 }};
+        const columns = [[], [], [], [], [], []];
+        nodes.forEach(n => {{
+            const col = typeOrder[n.type] !== undefined ? typeOrder[n.type] : 2;
+            columns[col].push(n);
+        }});
 
-      document.querySelectorAll('.conn-line').forEach(el => {{
-        if (el.dataset.source === node.id || el.dataset.target === node.id) {{
-          el.classList.add('active');
-        }} else {{
-          el.classList.remove('active');
+        const nodePos = {{}};
+        const colWidth = width / 6;
+        columns.forEach((colNodes, cIdx) => {{
+            const rowHeight = height / (colNodes.length + 1);
+            colNodes.forEach((n, rIdx) => {{
+                const x = colWidth * (cIdx + 0.5);
+                const y = rowHeight * (rIdx + 1);
+                nodePos[n.id] = {{ x, y, node: n }};
+            }});
+        }});
+
+        let linksMarkup = '';
+        links.forEach(l => {{
+            const sId = typeof l.source === 'object' ? l.source.id : l.source;
+            const tId = typeof l.target === 'object' ? l.target.id : l.target;
+            const s = nodePos[sId];
+            const t = nodePos[tId];
+            if (s && t) {{
+                const stroke = l.is_critical ? '#ef4444' : 'rgba(56, 189, 248, 0.45)';
+                const strokeWidth = l.is_critical ? 3 : 1.5;
+                const dash = l.is_critical ? 'none' : '4,3';
+                linksMarkup += `<line x1="${{s.x}}" y1="${{s.y}}" x2="${{t.x}}" y2="${{t.y}}" stroke="${{stroke}}" stroke-width="${{strokeWidth}}" stroke-dasharray="${{dash}}"/>`;
+            }}
+        }});
+
+        let nodesMarkup = '';
+        Object.values(nodePos).forEach(p => {{
+            const n = p.node;
+            const aura = (n.is_chokepoint || n.is_critical)
+                ? `<circle cx="${{p.x}}" cy="${{p.y}}" r="${{n.radius + 6}}" fill="none" stroke="${{n.is_chokepoint ? '#f59e0b' : '#ef4444'}}" stroke-width="2" stroke-dasharray="${{n.is_chokepoint ? '4,2' : 'none'}}" opacity="0.85"/>`
+                : '';
+            nodesMarkup += `
+                <g class="fallback-node" style="cursor: pointer;" data-id="${{n.id}}">
+                    ${{aura}}
+                    <circle cx="${{p.x}}" cy="${{p.y}}" r="${{n.radius + 3}}" fill="${{n.color}}" opacity="0.25"/>
+                    <circle cx="${{p.x}}" cy="${{p.y}}" r="${{n.radius}}" fill="#0f172a" stroke="${{n.color}}" stroke-width="2.2"/>
+                    <text x="${{p.x}}" y="${{p.y + 4}}" text-anchor="middle" font-size="${{n.radius > 20 ? 14 : 11}}px" pointer-events="none">${{n.icon}}</text>
+                    <text x="${{p.x}}" y="${{p.y + n.radius + 14}}" text-anchor="middle" font-size="11px" font-weight="${{n.is_critical ? 700 : 600}}" fill="${{n.is_critical ? '#f87171' : '#cbd5e1'}}" pointer-events="none">${{n.name}}</text>
+                </g>
+            `;
+        }});
+
+        svgEl.innerHTML = `<g id="fallback-layer">${{linksMarkup}}${{nodesMarkup}}</g>`;
+
+        const tooltip = document.getElementById("tooltip");
+        svgEl.querySelectorAll('.fallback-node').forEach(el => {{
+            const nid = el.getAttribute('data-id');
+            const n = nodePos[nid]?.node;
+            if (!n) return;
+            el.addEventListener('mouseenter', (e) => {{
+                if (!tooltip) return;
+                tooltip.style.display = "block";
+                tooltip.innerHTML = `<div style="font-weight:700;color:${{n.color}};margin-bottom:2px;">${{n.icon}} ${{n.raw_name}}</div>
+                                     <div style="font-size:11px;color:#38bdf8;margin-bottom:4px;">Compromise Probability: <b>${{n.prob_pct}}</b></div>
+                                     <div style="font-size:11px;color:#94a3b8;">${{n.desc}}</div>`;
+            }});
+            el.addEventListener('mousemove', (e) => {{
+                if (!tooltip) return;
+                const rect = container.getBoundingClientRect();
+                tooltip.style.left = (e.clientX - rect.left + 15) + "px";
+                tooltip.style.top = (e.clientY - rect.top + 10) + "px";
+            }});
+            el.addEventListener('mouseleave', () => {{
+                if (tooltip) tooltip.style.display = "none";
+            }});
+        }});
+    }}
+
+    if (typeof d3 !== 'undefined' && typeof d3.forceSimulation === 'function') {{
+        try {{
+            renderWithD3();
+        }} catch (err) {{
+            console.warn('D3 simulation error, engaging fallback SVG layout:', err);
+            renderFallbackSvg();
         }}
-      }});
-
-      inspTitle.textContent = node.full_name || node.label;
-      inspBody.textContent = node.details || '';
-    }});
-
-    nodesGroup.appendChild(g);
-  }});
-</script>
-</body>
-</html>"""
-    return html_content
+    }} else {{
+        renderFallbackSvg();
+    }}
+    </script>
+    </body>
+    </html>
+    """
+    return html_code

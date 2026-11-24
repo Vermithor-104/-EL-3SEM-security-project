@@ -1,23 +1,50 @@
-.env
-.venv/
-venv/
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-data/*.json
-data/*/*.json
-data/*.db
-data/cache/
-data/history/
-!data/.gitkeep
-.idea/
-.vscode/
-*.log
+*$py.class
 
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Logs & scratch
+*.log
+scratch/
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Backups & deployments
+*.bak
+*_backup.html
+.vercel
+
+# Generated runtime scan reports and caches (do not commit runtime telemetry)
+discovery_report.json
+prioritized_report.json
+online_assessment_report.json
+vulnerabilities.json
+explanation.json
+dashboard.html
+data/verified_targets.json
+data/history/
+data/**/history/
+data/*
+!data/sample/
+!data/sample/**
+!data/owasp.org/
+!data/owasp.org/**
+data/owasp.org/history/
+!data/cve_symbols.yaml
+reports/*.json
+!reports/sample_*.json

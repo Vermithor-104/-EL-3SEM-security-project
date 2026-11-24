@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS-AI | Autonomous Attack Surface Risk-Based Vulnerability Management (RBVM)</title>
+    
+    <!-- Favicon & Brand Symbols -->
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="alternate icon" href="/favicon.ico">
+    <meta name="theme-color" content="#050811">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Modular Stylesheet -->
+    <link rel="stylesheet" href="/static/css/styles.css?v=3.1">
+
+    <!-- Bundled Vendor Libraries -->
+    <script src="/static/js/three.min.js?v=2.3"></script>
+    <script src="/static/js/chart.min.js?v=2.3"></script>
+</head>
+<body>
+
+    <!-- Accessible Skip Link -->
+    <a href="#mainContent" class="skip-link">Skip to main content</a>
+
+    <!-- ========================================== -->
+    <!-- TOP STICKY COMMAND BAR                     -->
+    <!-- ========================================== -->
+    <header role="banner" class="tactical-header">
+        <div class="brand-box" id="brandBox" style="cursor: pointer;">
+            <div class="brand-icon">
+                <img src="/static/favicon.svg" alt="AEGIS-AI Cyber Shield" width="26" height="26">
+            </div>
+            <div>
+                <div class="brand-title">
+                    AEGIS-AI
+                    <span class="brand-tag">3D RBVM</span>
+                </div>
+                <div class="brand-subtitle mono">
+                    Autonomous CTEM &amp; Threat Exposure Platform
+                </div>
+            </div>
+        </div>
+
+        <!-- Target Selector & Scan Launcher -->
+        <div class="target-bar">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+            <span class="target-icon" aria-hidden="true">🎯</span>
+            <input type="text" id="scanTargetInput" class="target-input mono" value="" placeholder="Target domain or IP (e.g. example.com)" aria-label="Target domain or IP address">
+            <label id="activeScanToggleContainer" class="active-toggle-label" title="Active TCP port & service probing (requires verified domain ownership or allowlist)">
+                <input type="checkbox" id="chkActiveScan" class="active-checkbox">
+                <span id="activeScanLabel">Active Probe</span>
+            </label>
+            <button class="btn-scan" id="btnStartScan" aria-label="Run security audit">
+                <span id="scanSpinner">⚡</span>
+                <span id="scanBtnText">Run Audit</span>
+            </button>
+            <button class="btn-scan btn-demo-scan" id="btnLoadDemoScan" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(217, 119, 6, 0.35) 100%); border: 1px solid #f59e0b; color: #fbbf24; margin-left: 6px;" title="Load verified demo scan (OWASP Juice Shop testbed)">
+                <span>🧪</span>
+                <span id="btnLoadDemoText">Load Verified Demo Scan</span>
+            </button>
+        </div>
+
+        <!-- Quick Action Tools Bar -->
+        <div class="header-actions">
+            <button class="btn-hud" id="btnOpenVerification" title="Verify Domain Ownership to Unlock Active Mode">
+                🔑 Verify Ownership
+            </button>
+            <button class="btn-hud mono" id="btnTogglePalette" title="Press Ctrl+K">
+                ⌨️ <span class="kbd-pill">Ctrl+K</span>
+            </button>
+            <button class="btn-hud" id="btnExportCsv" title="Download CSV">
+                📥 CSV
+            </button>
+            <button class="btn-hud" id="btnExportHtml" title="Download CISO HTML Report">
+                📑 CISO Report
+            </button>
+            <button class="btn-hud" id="btnExportSbom" title="CycloneDX v1.5 SBOM">
+                📦 SBOM
+            </button>
+            <button class="btn-hud highlight" id="btnOpenAttackGraph" title="View Interactive Cyber Attack Surface Topology Network Graph">
+                🕸️ Attack Graph
+            </button>
+            <button class="btn-hud" id="btnHeaderCopilot" title="Toggle Aegis Copilot">
+                🤖 Copilot
+            </button>
+            <button class="btn-hud" id="btnHeaderTerminal" title="Toggle Live Console">
+                💻 Terminal
+            </button>
+
+            <!-- Server-Side Mode Gate Indicator -->
+            <div class="status-pill" id="modePill" title="Operational Mode determined by server safety gate">
+                <span class="status-dot"></span>
+                <span id="operationalModeBadge">PASSIVE OSINT</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ========================================== -->
+    <!-- MAIN DASHBOARD CONTENT                     -->
+    <!-- ========================================== -->
+    <main id="mainContent" role="main">
+
+        <!-- LIVE AUDIT TELEMETRY STREAM TERMINAL -->
+        <div id="auditTerminal" class="audit-terminal-container">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+            <div class="terminal-bar">
+                <div class="terminal-left">
+                    <span class="terminal-dot red"></span>
+                    <span class="terminal-dot yellow"></span>
+                    <span class="terminal-dot green"></span>
+                    <span class="terminal-title">AEGIS-AI // REAL PERIMETER RECONNAISSANCE &amp; SYNTHESIS CONSOLE</span>
+                </div>
+                <div class="terminal-right">
+                    <span class="terminal-status-badge" id="terminalStatusBadge">
+                        <span class="pulse-indicator"></span> STANDBY
+                    </span>
+                    <button class="terminal-toggle-btn" id="btnTerminalMinimize" title="Toggle Console">_</button>
+                </div>
+            </div>
+            <div class="terminal-body" id="terminalLogs">
+                <div class="term-line prompt">&gt; System initialized. Awaiting target audit command...</div>
+            </div>
+        </div>
+
+        <!-- SECTION 1: ROTATING 3D CYBER GLOBE HERO VIEWPORT -->
+        <section class="hero-stage tactical-viewport" aria-label="3D Attack Surface Globe">
+            <!-- Tactical Corner Bracket Reticles -->
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+
+            <div id="globe-container" class="globe-viewport"></div>
+
+            <!-- Interactive 3D Globe Ingress & Vulnerability Tooltip HUD -->
+            <div id="globeTooltip" class="globe-tooltip" style="display: none;">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div class="globe-tooltip-header">
+                    <span id="globeTooltipSeverity" class="badge">CRITICAL</span>
+                    <span id="globeTooltipScore" class="mono">--</span>
+                </div>
+                <div id="globeTooltipTitle" class="globe-tooltip-title">Perimeter Vulnerability</div>
+                <div id="globeTooltipMeta" class="globe-tooltip-meta mono">EPSS: -- &middot; CVSS: --</div>
+                <div id="globeTooltipCves" class="globe-tooltip-cves"></div>
+                <div class="globe-tooltip-hint mono">➔ Click node to inspect triage dossier &amp; patch</div>
+            </div>
+
+            <!-- 3D Globe HUD Overlays -->
+            <div class="hud-overlay">
+                <div class="hud-top">
+                    <div class="hud-badge tactical-card">
+                        <span class="corner-reticle tl"></span>
+                        <span class="corner-reticle tr"></span>
+                        <span class="corner-reticle bl"></span>
+                        <span class="corner-reticle br"></span>
+                        <span class="hud-badge-title mono">// ENTERPRISE THREAT POSTURE</span>
+                        <div class="hud-badge-val">
+                            <span id="statComplianceScore" class="glow-text-cyan">--%</span>
+                            <span class="unit" id="statComplianceGrade">Awaiting Scan</span>
+                        </div>
+                    </div>
+
+                    <div class="hud-center-tag mono">
+                        <span class="pulse-beacon"></span>
+                        <span>AEGIS SENTINEL // 3D SURFACE INGRESS RADAR</span>
+                    </div>
+
+                    <div class="hud-controls">
+                        <div class="hud-zoom-control-group" aria-label="Globe Zoom Controls">
+                            <button class="btn-hud btn-zoom" id="btnGlobeZoomIn" title="Make Globe Larger (Zoom In)" aria-label="Zoom In">
+                                <span>＋</span>
+                            </button>
+                            <span class="hud-zoom-level mono" id="globeZoomLevel" title="Current Zoom Scale">100%</span>
+                            <button class="btn-hud btn-zoom" id="btnGlobeZoomOut" title="Make Globe Smaller (Zoom Out)" aria-label="Zoom Out">
+                                <span>－</span>
+                            </button>
+                            <button class="btn-hud btn-zoom" id="btnGlobeZoomReset" title="Reset Size and Orientation" aria-label="Reset View">
+                                <span>⟲</span>
+                            </button>
+                        </div>
+                        <button class="btn-hud" id="btnToggleGlobeSpin" title="Toggle 3D Orbit Spin">
+                            🔄 <span>Toggle Spin</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="hud-bottom">
+                    <div class="hud-telemetry-feed mono tactical-card">
+                        <span class="corner-reticle tl"></span>
+                        <span class="corner-reticle tr"></span>
+                        <span class="corner-reticle bl"></span>
+                        <span class="corner-reticle br"></span>
+                        <div class="hud-telemetry-item">
+                            <span class="telemetry-node cyan">●</span>
+                            <span>Target: <strong id="targetDisplay">None Selected</strong></span>
+                        </div>
+                        <div class="hud-telemetry-item">
+                            <span class="telemetry-node emerald">●</span>
+                            <span>Location: <strong id="globeTargetLocation">Awaiting Target</strong></span>
+                        </div>
+                        <div class="hud-telemetry-item">
+                            <span class="telemetry-node amber">●</span>
+                            <span>Feeds: <strong>CISA KEV + FIRST.org EPSS</strong></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION 2: EXECUTIVE METRIC CARDS -->
+        <div class="stats-ribbon">
+            <div class="metric-card accent-cyan">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div class="metric-header">
+                    <span class="stat-label">Total Findings</span>
+                    <span class="metric-index mono">// SEC.01</span>
+                </div>
+                <div class="stat-val glow-text-cyan" id="statTotalFindings">0</div>
+                <div class="metric-sub mono">Correlated Ingress Vectors</div>
+            </div>
+
+            <div class="metric-card accent-crit">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div class="metric-header">
+                    <span class="stat-label">P1 Critical Risk</span>
+                    <span class="metric-index mono">// P1.BREACH</span>
+                </div>
+                <div class="stat-val glow-text-rose" id="statCritCount">0</div>
+                <div class="metric-sub mono">Active CISA KEV / RCE Flaws</div>
+            </div>
+
+            <div class="metric-card accent-high">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div class="metric-header">
+                    <span class="stat-label">P2 High Risk</span>
+                    <span class="metric-index mono">// P2.EXPLOIT</span>
+                </div>
+                <div class="stat-val glow-text-orange" id="statHighCount">0</div>
+                <div class="metric-sub mono">High Probability Weapons</div>
+            </div>
+
+            <div class="metric-card accent-med">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div class="metric-header">
+                    <span class="stat-label">P3 Medium Risk</span>
+                    <span class="metric-index mono">// P3.ATTACK</span>
+                </div>
+                <div class="stat-val glow-text-amber" id="statMedCount">0</div>
+                <div class="metric-sub mono">Transport &amp; Header Drift</div>
+            </div>
+
+            <div class="metric-card accent-low">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+                <div class="metric-header">
+                    <span class="stat-label">P4 Low / Info</span>
+                    <span class="metric-index mono">// P4.HYGIENE</span>
+                </div>
+                <div class="stat-val glow-text-blue" id="statLowCount">0</div>
+                <div class="metric-sub mono">Passive Telemetry Markers</div>
+            </div>
+        </div>
+
+        <!-- SECTION 3: VISUAL EXPOSURE MATRIX & THREAT RADAR -->
+        <div class="grid-dual-command">
+            <!-- Exposure Matrix -->
+            <div class="tactical-panel matrix-panel">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+
+                <div class="panel-header">
+                    <div>
+                        <div class="panel-title-row">
+                            <span class="panel-icon">📊</span>
+                            <h3 class="panel-title">Contextual Risk Exposure Matrix</h3>
+                        </div>
+                        <div class="panel-subtitle mono">
+                            X: CVSS Theoretical Base Flaw &middot; Y: FIRST.org EPSS Real Weaponization (%)
+                        </div>
+                    </div>
+                    <span class="badge-tactical mono" id="matrixMetaBadge">
+                        Plotted: 0 | Excluded: 0
+                    </span>
+                </div>
+                <div class="chart-canvas-container">
+                    <canvas id="riskMatrixChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Threat Radar -->
+            <div class="tactical-panel radar-panel">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+
+                <div class="panel-header">
+                    <div class="panel-title-row">
+                        <span class="panel-icon">🎯</span>
+                        <h3 class="panel-title">Blind CVSS vs. AEGIS Contextual</h3>
+                    </div>
+                    <button class="btn btn-secondary btn-sm" id="btnResetThreatRadar">Reset</button>
+                </div>
+                <div class="chart-canvas-container">
+                    <canvas id="threatRadarChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 4: FINDINGS TRIAGE TABLE & ATTACK SIMULATOR -->
+        <div class="grid-dual-command">
+            <!-- Findings Table -->
+            <div class="tactical-panel table-panel">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+
+                <div class="panel-header">
+                    <div class="panel-title-row">
+                        <span class="panel-icon">🛡️</span>
+                        <h3 class="panel-title">Correlated Perimeter Findings</h3>
+                    </div>
+                    <span class="panel-tag mono">Ranked by Attack Vector Impact</span>
+                </div>
+
+                <div class="table-scroll-wrap">
+                    <table class="table-triage">
+                        <thead>
+                            <tr>
+                                <th>Priority</th>
+                                <th>Score</th>
+                                <th>Finding Title</th>
+                                <th>CVEs</th>
+                                <th>Source</th>
+                                <th>EPSS Prob</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="findingsTableBody">
+                            <tr><td colspan="7" class="table-empty">Awaiting scan telemetry. Enter a target above and click "Run Audit".</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Selected Finding & Attack Simulator -->
+            <div class="tactical-panel triage-panel">
+                <span class="corner-reticle tl"></span>
+                <span class="corner-reticle tr"></span>
+                <span class="corner-reticle bl"></span>
+                <span class="corner-reticle br"></span>
+
+                <div class="panel-header">
+                    <h3 class="panel-title" id="selectedFindingTitle">Finding Triage Dossier</h3>
+                    <span class="badge-score mono" id="selectedFindingScore">-- / 10</span>
+                </div>
+                <div class="finding-desc" id="selectedFindingDesc">Select a row to inspect evidence and virtual patch.</div>
+                
+                <div class="adversary-header">
+                    <span class="pulse-beacon"></span>
+                    <h4 class="adversary-title">Illustrative Adversary Walkthrough</h4>
+                </div>
+                <div id="attackSimulatorContainer" class="simulator-stream"></div>
+            </div>
+        </div>
+
+        <!-- SECTION 5: MULTI-FRAMEWORK COMPLIANCE GOVERNANCE -->
+        <div class="tactical-panel compliance-panel">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+
+            <div class="panel-header">
+                <div>
+                    <div class="panel-title-row">
+                        <span class="panel-icon">🏛️</span>
+                        <h3 class="panel-title">Multi-Framework Governance &amp; Regulatory Compliance</h3>
+                    </div>
+                    <div class="panel-subtitle mono">
+                        Dynamically evaluated from discovered security controls. No hardcoded fixed percentages.
+                    </div>
+                </div>
+                <span class="badge-tactical mono">ISO / NIST / PCI / SOC2</span>
+            </div>
+
+            <div class="compliance-grid">
+                <!-- PCI-DSS 4.0 -->
+                <div class="compliance-card">
+                    <span class="corner-reticle tl"></span>
+                    <span class="corner-reticle tr"></span>
+                    <span class="corner-reticle bl"></span>
+                    <span class="corner-reticle br"></span>
+                    <div class="compliance-card-header">
+                        <span class="framework-name">PCI-DSS 4.0</span>
+                        <span class="comp-status-chip compliant" id="compPciStatus">MONITORED</span>
+                    </div>
+                    <div class="compliance-score glow-text-cyan" id="compPciScore">--%</div>
+                    <div class="compliance-progress-track">
+                        <div class="compliance-progress-fill" id="compPciBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="compliance-controls mono" id="compPciPass">Awaiting Target</div>
+                </div>
+
+                <!-- NIST CSF 2.0 -->
+                <div class="compliance-card">
+                    <span class="corner-reticle tl"></span>
+                    <span class="corner-reticle tr"></span>
+                    <span class="corner-reticle bl"></span>
+                    <span class="corner-reticle br"></span>
+                    <div class="compliance-card-header">
+                        <span class="framework-name">NIST CSF 2.0</span>
+                        <span class="comp-status-chip compliant" id="compNistStatus">MONITORED</span>
+                    </div>
+                    <div class="compliance-score glow-text-emerald" id="compNistScore">--%</div>
+                    <div class="compliance-progress-track">
+                        <div class="compliance-progress-fill" id="compNistBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="compliance-controls mono" id="compNistPass">Awaiting Target</div>
+                </div>
+
+                <!-- ISO/IEC 27001:2022 -->
+                <div class="compliance-card">
+                    <span class="corner-reticle tl"></span>
+                    <span class="corner-reticle tr"></span>
+                    <span class="corner-reticle bl"></span>
+                    <span class="corner-reticle br"></span>
+                    <div class="compliance-card-header">
+                        <span class="framework-name">ISO/IEC 27001:2022</span>
+                        <span class="comp-status-chip compliant" id="compIsoStatus">MONITORED</span>
+                    </div>
+                    <div class="compliance-score glow-text-blue" id="compIsoScore">--%</div>
+                    <div class="compliance-progress-track">
+                        <div class="compliance-progress-fill" id="compIsoBar" style="width: 0%;"></div>
+                    </div>
+                    <div class="compliance-controls mono" id="compIsoPass">Awaiting Target</div>
+                </div>
+
+                <!-- SOC 2 Type II -->
+                <div class="compliance-card">
+                    <span class="corner-reticle tl"></span>
+                    <span class="corner-reticle tr"></span>
+                    <span class="corner-reticle bl"></span>
+                    <span class="corner-reticle br"></span>
+                    <div class="compliance-card-header">
+                        <span class="framework-name">SOC 2 Type II</span>
+                        <span class="comp-status-chip partial" id="compSoc2Status">MONITORED</span>
+                    </div>
+                    <div class="compliance-score glow-text-amber" id="compSoc2Score">--%</div>
+                    <div class="compliance-progress-track">
+                        <div class="compliance-progress-fill" id="compSoc2Bar" style="width: 0%;"></div>
+                    </div>
+                    <div class="compliance-controls mono" id="compSoc2Pass">Awaiting Target</div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- FLOATING LAUNCHER FAB (shown when copilot dock is closed) -->
+    <button class="copilot-fab" id="copilotFab" aria-label="Open Aegis Copilot">
+        <span class="copilot-fab-icon">🤖</span>
+        <span class="copilot-fab-label">Aegis Copilot</span>
+    </button>
+
+    <!-- AEGIS COPILOT INTERACTIVE CHAT DOCK -->
+    <div id="copilotDrawer" class="copilot-drawer" style="display: none;">
+        <span class="corner-reticle tl"></span>
+        <span class="corner-reticle tr"></span>
+        <span class="corner-reticle bl"></span>
+        <span class="corner-reticle br"></span>
+        <div class="copilot-header">
+            <div class="copilot-header-info">
+                <span class="copilot-header-icon">🤖</span>
+                <div>
+                    <div class="copilot-header-title">
+                        Aegis Copilot
+                        <span class="copilot-status-dot" title="SOC Guardrail Active"></span>
+                    </div>
+                    <div class="copilot-header-sub mono">Grounded Defensive SOC Assistant</div>
+                </div>
+            </div>
+            <div class="copilot-header-actions">
+                <button class="copilot-control-btn" id="btnCopilotMinimize" title="Minimize" aria-label="Minimize Copilot">_</button>
+                <button class="copilot-control-btn" id="btnCopilotClose" title="Close" aria-label="Close Copilot">&times;</button>
+            </div>
+        </div>
+        <div class="copilot-messages" id="copilotMessages"></div>
+        <div class="copilot-chips" id="copilotChips">
+            <button class="chip" data-prompt="Summarize top findings">🛡️ Summary</button>
+            <button class="chip" data-prompt="What is our NIST compliance readiness?">📋 Compliance</button>
+            <button class="chip" data-prompt="Provide Nginx virtual patch">🛠️ Patch Config</button>
+            <button class="chip" data-prompt="Explain risk scoring formula">📐 Scoring Formula</button>
+        </div>
+        <div class="copilot-input-bar">
+            <input type="text" id="copilotInput" placeholder="Ask Aegis Copilot..." aria-label="Copilot input prompt">
+            <button id="btnCopilotSend">Send</button>
+        </div>
+    </div>
+
+    <!-- DOMAIN OWNERSHIP VERIFICATION MODAL -->
+    <div id="verificationModal" class="modal-backdrop" style="display: none;">
+        <div class="modal-box">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+            <div class="modal-header">
+                <h3>Domain Ownership Verification</h3>
+                <button class="modal-close" id="btnCloseVerificationModal">&times;</button>
+            </div>
+            <div id="verificationModalBody" style="padding: 16px;"></div>
+        </div>
+    </div>
+
+    <!-- REMEDIATION & VIRTUAL PATCHING MODAL -->
+    <div id="remediationModal" class="modal-backdrop" style="display: none;">
+        <div class="modal-box" style="max-width: 720px; width: 90%;">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+            <div class="modal-header">
+                <div>
+                    <h3 id="remediationModalTitle">🛠️ Security Remediation &amp; Virtual Patching</h3>
+                    <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;" id="remediationModalSubtitle">Production hardening rules &amp; configurations</div>
+                </div>
+                <button class="modal-close" id="btnCloseRemediationModal">&times;</button>
+            </div>
+            <div id="remediationModalBody" style="padding: 16px;">
+                <div style="display: flex; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; margin-bottom: 12px; flex-wrap: wrap;" id="remediationTabs">
+                    <button class="btn btn-sm btn-primary tab-btn" data-tab="nginx">Nginx</button>
+                    <button class="btn btn-sm btn-secondary tab-btn" data-tab="apache">Apache</button>
+                    <button class="btn btn-sm btn-secondary tab-btn" data-tab="caddy">Caddy</button>
+                    <button class="btn btn-sm btn-secondary tab-btn" data-tab="helmet">Helmet (Node.js)</button>
+                    <button class="btn btn-sm btn-secondary tab-btn" data-tab="waf">WAF Rules</button>
+                </div>
+                <div style="position: relative;">
+                    <div style="display: flex; justify-content: flex-end; margin-bottom: 6px;">
+                        <button class="btn btn-secondary btn-sm" id="btnCopyRemediation">📋 Copy Configuration</button>
+                    </div>
+                    <pre id="remediationCodeDisplay" style="background: #030712; border: 1px solid rgba(0, 240, 255, 0.2); border-radius: 6px; padding: 14px; font-family: 'JetBrains Mono', Consolas, monospace; font-size: 0.8rem; color: #38bdf8; max-height: 320px; overflow: auto; white-space: pre-wrap; line-height: 1.5;"></pre>
+                </div>
+                <div id="remediationFindingNote" style="margin-top: 12px; font-size: 0.8rem; color: #cbd5e1; background: rgba(0, 240, 255, 0.05); padding: 10px; border-radius: 4px; border-left: 3px solid #00f0ff;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- COMMAND PALETTE MODAL (Ctrl+K) -->
+    <div id="commandPaletteModal" class="modal-backdrop" style="display: none;">
+        <div class="modal-box" style="max-width: 500px;">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+            <input type="text" id="paletteSearchInput" placeholder="Type a command or jump to section..." style="width: 100%; background: #030712; border: 1px solid #00f0ff; color: #fff; padding: 12px; border-radius: 4px; font-size: 0.9rem;">
+            <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 6px;" id="paletteResults">
+                <div class="palette-item" data-action="attack-graph">🕸️ Open Attack Surface Topology Graph</div>
+                <div class="palette-item" data-action="model-routing">⚡ Inspect Model Routing Architecture</div>
+                <div class="palette-item" data-action="terminal">💻 Open Telemetry Terminal</div>
+                <div class="palette-item" data-action="ciso">📑 Generate CISO Executive Report</div>
+                <div class="palette-item" data-action="csv">📥 Download Vulnerability CSV</div>
+                <div class="palette-item" data-action="sbom">📦 Download CycloneDX v1.5 SBOM</div>
+                <div class="palette-item" data-action="verify">🔑 Verify Domain Ownership</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODEL ROUTING ARCHITECTURE MODAL -->
+    <div id="modelRoutingModal" class="modal-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modelRoutingModalTitle">
+        <div class="modal-box" style="max-width: 820px; width: 95%;">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+            <div class="modal-header">
+                <div>
+                    <h3 id="modelRoutingModalTitle" style="color: #fff; font-size: 1.1rem; font-weight: 700;">⚡ Model Routing Architecture &amp; LLM Gateway</h3>
+                    <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">Multi-tier routing, token optimization &amp; grounding guardrail telemetry</div>
+                </div>
+                <button class="modal-close" id="btnCloseModelRoutingModal" aria-label="Close model routing">&times;</button>
+            </div>
+            <div class="modal-body" id="modelRoutingContent" style="padding: 20px; max-height: 520px; overflow-y: auto; color: #e2e8f0; font-size: 0.88rem;">
+                <div style="text-align: center; color: #94a3b8; padding: 24px;">Loading model routing telemetry...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- IN-TAB ATTACK GRAPH MODAL -->
+    <div id="attackGraphModal" class="modal-backdrop" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="attackGraphModalTitle">
+        <div class="modal-box" style="max-width: 1100px; width: 95%;">
+            <span class="corner-reticle tl"></span>
+            <span class="corner-reticle tr"></span>
+            <span class="corner-reticle bl"></span>
+            <span class="corner-reticle br"></span>
+            <div class="modal-header">
+                <div>
+                    <h3 id="attackGraphModalTitle" style="color: #fff; font-size: 1.1rem; font-weight: 700;">🕸️ Cyber Attack Surface Network Graph</h3>
+                    <div style="font-size: 0.75rem; color: #94a3b8; margin-top: 2px;">Interactive Bayesian exploit paths &amp; perimeter ingress topology</div>
+                </div>
+                <button class="modal-close" id="btnCloseAttackGraphModal" aria-label="Close attack graph">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 0; height: 680px; position: relative;">
+                <iframe id="attackGraphFrame" title="Attack Surface Network Graph" style="width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <div id="toastContainer" style="position: fixed; bottom: 20px; right: 20px; z-index: 999999;"></div>
+
+    <!-- Modular Application JavaScript Files -->
+    <script src="/static/js/utils.js?v=2.3"></script>
+    <script src="/static/js/globe.js?v=3.2"></script>
+    <script src="/static/js/charts.js?v=2.3"></script>
+    <script src="/static/js/telemetry.js?v=2.3"></script>
+    <script src="/static/js/verification.js?v=2.3"></script>
+    <script src="/static/js/copilot.js?v=2.3"></script>
+    <script src="/static/js/app.js?v=3.1"></script>
+
+</body>
+</html>

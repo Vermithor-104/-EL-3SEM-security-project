@@ -1,6 +1,6 @@
 """Backend orchestration service for defensive scan requests.
 
-This module is intentionally UI-agnostic. The CLI, Streamlit dashboard, and any
+This module is intentionally UI-agnostic. The CLI, web dashboard, and any
 future API layer should call this service instead of reaching into discovery,
 correlation, prioritization, and storage modules directly.
 """

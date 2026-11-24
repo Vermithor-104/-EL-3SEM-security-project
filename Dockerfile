@@ -1,29 +1,53 @@
-FROM python:3.12-slim
+# ==============================================================================
+# AEGIS-AI Container Runtime
+# Secure, non-root Debian-slim container with active network reconnaissance support
+# ==============================================================================
 
+FROM python:3.11-slim
+
+# Prevent Python from writing .pyc files and enable unbuffered output
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    STREAMLIT_SERVER_HEADLESS=true \
-    STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
-    STREAMLIT_SERVER_PORT=8501
+    HOST=0.0.0.0 \
+    PORT=5000 \
+    AEGIS_HOST=0.0.0.0 \
+    AEGIS_PORT=5000 \
+    AEGIS_DATA_DIR=/app/data
+
+# Install system dependencies: nmap for verified active scans, ca-certificates, curl for healthchecks
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nmap \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create dedicated non-root application user
+RUN groupadd -g 1001 aegisgroup && \
+    useradd -u 1001 -g aegisgroup -m -s /bin/bash aegis
 
 WORKDIR /app
 
-# Install nmap for active discovery scans and curl for container health checks
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nmap \
-    curl \
-    dnsutils \
-    && rm -rf /var/lib/apt/lists/*
+# Create isolated virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency definition and install within virtual environment
+COPY requirements.txt /app/
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
-COPY . .
-RUN mkdir -p /app/data
+# Copy application source code
+COPY . /app/
 
-EXPOSE 8501
+# Create runtime data/report directories and grant permissions to non-root user
+RUN mkdir -p /app/data /app/reports && \
+    chown -R aegis:aegisgroup /app /opt/venv
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://127.0.0.1:8501/_stcore/health || exit 1
+# Switch to unprivileged user
+USER aegis
 
-CMD ["streamlit", "run", "dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+# Expose HTTP port
+EXPOSE 5000
+
+# Launch AEGIS application via production WSGI server (adapts dynamically to $PORT on Render/Cloud)
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 2 --worker-class gthread --threads 4 --timeout 120 app:app"]

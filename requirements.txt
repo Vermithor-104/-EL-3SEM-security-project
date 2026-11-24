@@ -1,9 +1,33 @@
-boto3>=1.35.90
-botocore>=1.35.90
-python-dotenv>=1.0.1
+# ==============================================================================
+# AEGIS-AI Production Dependencies
+# Memory-optimized for Render Free Tier (512 MB RAM)
+# Python 3.10+
+# ==============================================================================
+
+# Core Web Application & REST API
+Flask>=3.0.0,<3.2.0
+gunicorn>=21.2.0
+
+# Environment Configuration & Secret Management
+python-dotenv>=1.0.0,<2.0.0
+PyYAML>=6.0
+
+# HTTP Transport, Telemetry & Threat Intelligence
+requests>=2.31.0,<3.0.0
+urllib3>=2.0.7,<3.0.0
+openai>=1.0.0
+
+# Optional Active Network Reconnaissance
 python-nmap>=0.7.1
-requests>=2.32.3
-streamlit>=1.40.2
-urllib3>=2.2.3
-strands-agents>=1.61.0
-strands-decider>=0.2.0
+cryptography>=41.0.0
+
+# JavaScript AST Reachability Analysis
+esprima>=4.0.1
+
+# Presentation Generation
+python-pptx>=0.6.21
+
+# Graph Analytics & Core Mathematics
+networkx>=3.0
+numpy>=1.24.0
+scipy>=1.10.0

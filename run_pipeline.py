@@ -69,7 +69,7 @@ def main() -> None:
         run_target(host, ports, force_passive=args.passive_only)
 
     print("\n[+] Scan complete. Data written to data/ and data/history/")
-    print("[+] Dashboard: py -m streamlit run dashboard/app.py (or: python -m streamlit run dashboard/app.py)")
+    print("[+] Web Dashboard: python app.py (Open http://127.0.0.1:5000 in your browser)")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ from __future__ import annotations
 import socket
 from typing import Iterable
 
-from config import DEFAULT_PORTS, require_allowed_target
+from config import DEFAULT_PORTS, require_allowed_target, is_target_allowed
 from schemas import OpenPort
 
 
@@ -78,3 +78,14 @@ def scan_ports(target: str, ports: Iterable[int] | None = None) -> tuple[list[Op
     except Exception as exc:  # nmap binary missing, python-nmap error, etc.
         ports_found, method = _scan_with_sockets(host, port_list)
         return ports_found, f"{method}; nmap unavailable ({exc.__class__.__name__})"
+
+
+def run_active_scan(target: str, ports: Iterable[int] | None = None) -> tuple[list[OpenPort], str]:
+    """Execute active scan with Vercel serverless protection and allowlist gate."""
+    import config
+    if getattr(config, "IS_VERCEL", False):
+        raise PermissionError("Active port scanning is disabled on Vercel serverless environments.")
+    if not is_target_allowed(target):
+        raise PermissionError("Scan rejected: target is unauthorized. Verify domain ownership or add to targets.allowlist.")
+    return scan_ports(target, ports)
+
